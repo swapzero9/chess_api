@@ -12,29 +12,29 @@ router = APIRouter()
 @router.post("/position")
 async def position(details: InputFen):
 
-	eng = None
-	if details.targetComputer == "minimax_engine":
-		eng = MiniMaxComputer("b", 7)
-		print("chosen minimax")
-	else:
-		eng = RandomComputer("b")
-		print("chosen random")
-	
-	# create board and make a move
-	board = chess.Board(details.fen)
-	move = eng.think(details.fen)
-	board.push(move)
+    eng = None
+    if details.targetComputer == "minimax_engine":
+        eng = MiniMaxComputer("b", 7)
+        print("chosen minimax")
+    else:
+        eng = RandomComputer("b")
+        print("chosen random")
 
-	# parse it for the client
-	f = move.uci()[0:2]
-	t = move.uci()[2:4]
+    # create board and make a move
+    board = chess.Board(details.fen)
+    move = eng.think(details.fen)
+    board.push(move)
 
-	# parse promotion
-	p = None
-	if move.uci()[-1] in ["q", "n", "b", "r"]:
-		p = move.uci()[-1]
+    # parse it for the client
+    f = move.uci()[0:2]
+    t = move.uci()[2:4]
 
-	# create a return element
-	ret = OutputFen(fen=board.fen(), moveFrom=f, moveTo=t, promotion=p)
+    # parse promotion
+    p = None
+    if move.uci()[-1] in ["q", "n", "b", "r"]:
+        p = move.uci()[-1]
 
-	return ret
+    # create a return element
+    ret = OutputFen(fen=board.fen(), moveFrom=f, moveTo=t, promotion=p)
+
+    return ret
