@@ -5,7 +5,6 @@ import api.utils.decorators
 # from api.database.neo4j_driver import Neo4j_Driver, NeoNode, NeoRelationship
 from py2neo import Graph, Node, Relationship
 
-
 class TrainingSession:
     def __init__(self, engine_white, engine_black, amount: int = 10):
         self.engine_white = engine_white
@@ -21,13 +20,8 @@ class TrainingSession:
         )
         self.db = Graph("bolt://localhost:7687", auth=("neo4j", "s3cr3t"))
 
-        id = self.db.create_node(self.training_session_node, True)
-        self.session_id = id[0][0]
-        self.query_session = Node("TrainingNode")
-        print(self.session_id)
-
         tx = self.db.begin()
-        tx.create(self.query_session)
+        tx.create(self.training_session_node)
         self.db.commit(tx)
 
     def train(self):
@@ -71,7 +65,7 @@ class TrainingSession:
                     node = node.add_variation(move)
 
             pgn.headers["Result"] = game.result()
-
+            print(type(str(pgn)))
             game_node = Node(
                 "Game",
                 timestamp=datetime.today(),
@@ -80,11 +74,11 @@ class TrainingSession:
                 is_stalemate=game.is_stalemate(),
                 is_insufficient=game.is_insufficient_material(),
                 winner=game.result(),
-                game_pgn=pgn,
+                game_pgn=str(pgn),
             )
-            played_relationship = Relationship.type("Played")
-            played_relationship(self.query_session, game_node)
+            played_relationship = Relationship(self.training_session_node, "Played", game_node)
             tx = self.db.begin()
             tx.create(game_node)
             tx.create(played_relationship)
             self.db.commit(tx)
+            

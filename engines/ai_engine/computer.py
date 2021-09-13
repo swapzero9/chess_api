@@ -1,10 +1,15 @@
+from numpy.core.fromnumeric import argmax
+from torch._C import device
 import torch.nn as nn
 import torch
+import torch.nn.functional as F
 from api.engines.template_computer import Computer
 from torch.utils.data import Dataset
 import chess, chess.pgn
+import pandas as pd
 
 import io
+from py2neo import Graph, NodeMatcher, RelationshipMatcher
 
 
 class AiComputer(Computer):
@@ -14,68 +19,149 @@ class AiComputer(Computer):
 
     def __init__(self):
 
-        self.model = AiComputer.Net(self)
-        fen_raw = "rn2kbnr/pp1ppppp/8/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
-        fen = fen_raw.split(" ")[0]
-        # ten = self.fen_2_tensor(fen)
+        self.model = AiComputer.Net()
+        self.model.to(self.cuda_device)
+        self.tsfm = AiComputer.TransformToTensor()
+        self.moves = pd.read_csv("./api/utils/all_moves_generator/all_moves.csv")
+
+        # fen_raw = "rn2kbnr/pp1ppppp/8/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
+        # fen = fen_raw.split(" ")[0]
+        # a = tsfm(fen)
+        # print(a)
         # ten.unsqueeze_(0)
         # ten.unsqueeze_(0)
         # a = self.model(ten)
+        # print(a)
 
-        pgn = """
-[Event "Live Chess"]
-[Site "Chess.com"]
-[Date "2021.04.16"]
-[Round "-"]
-[White "swapzero1111"]
-[Black "chesslover240"]
-[Result "1-0"]
-[WhiteElo "1142"]
-[BlackElo "1105"]
-[TimeControl "180"]
-[EndTime "6:11:44 PDT"]
-[Termination "swapzero1111 won by resignation"]
+    def predict(self, fen):
+        with torch.no_grad():
+            ten = self.tsfm(fen)
+            ten.unsqueeze_(0)
+            ret = self.model(ten)
+            return self.moves[torch.argmax(ret).item(), 0]
 
-1. c4 e5 2. Nc3 Bb4 3. a3 Bxc3 4. dxc3 Nf6 5. b4 a6 6. g3 d6 7. Bg2 O-O 8. b5
-axb5 9. cxb5 Ra7 10. Be3 Ra8 11. a4 Qd7 12. Qb3 c6 13. Nh3 cxb5 14. a5 Na6 15.
-Bb6 e4 16. e3 d5 17. O-O Qd6 18. Nf4 Nc5 19. Bxc5 Qxc5 20. Nxd5 Nxd5 21. Bxe4
-Be6 22. Rfd1 Nxe3 23. c4 Bxc4 24. Qxe3 Rfe8 25. Qxc5 Rxe4 26. Rd7 Rae8 27. Qf5
-Be6 28. Qxe4 Bxd7 29. Qxb7 1-0
-        """
-        print(pgn)
-        aa = Computer.pgn_2_fenlist(pgn)
-        bb = Computer.fenlist_2_pgn(aa)
-        print(bb)
+    def predict_full(self, fen):
+        with torch.no_grad():
+            ten = self.tsfm(fen)
+            ten.unsqueeze_(0)
+            ret = self.model(ten)
+
+            # cp["prediction"] = cp.apply(lambda x:torch.from_numpy(ret.to_numpy()), axis=1)
+            batch_size = list(ret.size())[0]
+            for b in range(batch_size):
+                a = ret[b, :]
+                
+                cp = self.moves.copy()
+                cp[f"prediction"] = a.tolist()
+                # cp = cp.sort_values(by="prediction", ascending=True)
+                
+                # legal_moves
+                legal = chess.Board(fen).legal_moves
+                uci = list()
+                for move in legal:
+                    uci.append(move.uci())
+
+                cp["legal"] = cp["move"]
+                cp["legal"] = cp["legal"].isin(uci)
+                cp = cp.sort_values(by=["legal", "prediction"], ascending=[False, False])
+                print(cp)
+
 
     @classmethod
-    def create_dataset(tensor_list):
+    def create_dataset(self, query):
 
+        # get all the nodes from graph element with the given nodename
+        dataset = AiComputer.ChessMovesDataset(query)
+        print(dataset[0])
         pass
 
     class Net(nn.Module):
-        def __init__(self, outer):
+        def __init__(self):
             super(AiComputer.Net, self).__init__()
 
-            # outer class
-            self.outer = outer
-
             # define architecture
-            self.conv1 = torch.nn.Conv2d(1, 25, 4, device=AiComputer.cuda_device)
+            self.conv1 = nn.Conv2d(1, 50, 2)
+            self.conv2 = nn.Conv2d(50, 4000, 1)
+            self.pool = nn.MaxPool2d(2,2)
+            self.fc1 = nn.Linear(400 * 1 * 1, 3600)
+            self.fc2 = nn.Linear(3600, 1792)
 
         def forward(self, x):
-            return self.conv1(x)
+            x = self.pool(F.relu(self.conv1(x)))
+            x = self.pool(F.relu(self.conv2(x)))
+            x = torch.flatten(x, 1)
+            x = F.relu(self.fc1(x))
+            x = self.fc2(x)
+            return x
 
     class ChessMovesDataset(Dataset):
         # class for future building of chess moves dataset
 
+        def __init__(self, query_nodes, transform=None):
+            """
+            query must have pgn in order to be added to games dataset
+            """
+
+            self.games = list()
+            for node in query_nodes:
+                self.games.append(node.labels[0])
+
+        def __len__(self):
+            return len(self.games)
+
+        def __getitem__(self, idx):
+
+            item = self.games[idx]
+            return item
+
+
+    class TranformToFenlist(object):
+        """
+        not sure if correct approach
+        """
+
         def __init__(self):
             pass
 
-        def __len__(self):
+        def __call__(self, pgn_string):
+            act_pgn = io.StringIO(pgn_string)
+            game = chess.pgn.read_game(act_pgn)
+
+            move_list = list()
+            board = game.board()
+            for move in game.mainline_moves():
+                board.push(move)
+                move_list.append(board.fen())
+            return move_list
+
+    class TransformToTensor(object):
+        """
+        takes a fen input or a list and creates tensorlist
+        """
+
+        def __init__(self):
             pass
 
-        def __getitem__(self, idx):
-            pass
+        def __call__(self, fen):
+            if len(fen.split(" ")) > 1:
+                fen = fen.split(" ")[0]
+            ranks = fen.split("/")
+            i = 0
+            rank_tensor = torch.zeros(
+                8, 8, dtype=torch.float32, device=AiComputer.cuda_device
+            )
+            for rank in ranks:
+                j = 0
+                for letter in rank:
+                    if letter.isnumeric():
+                        j += int(letter)
+                    else:
+                        piece = AiComputer.piece_2_number(letter)
+                        rank_tensor[i, j] = piece
+                        j += 1
+                i += 1
+            rank_tensor.unsqueeze_(0)
+            return rank_tensor
 
     @staticmethod
     def piece_2_number(letter):
@@ -181,4 +267,22 @@ Be6 28. Qxe4 Bxd7 29. Qxb7 1-0
 
 if __name__ == "__main__":
 
+    # db = Graph("bolt://localhost:7687", auth=("neo4j", "s3cr3t"))
+    # matcher = NodeMatcher(db)
+
+    # games = matcher.match("Game").all()
+    # sessions = matcher.match("TrainingNode").first()
+
+    # rel_matcher = RelationshipMatcher(db)
+    # res = rel_matcher.match((sessions, None), "Played")
+    # lista = list(res)
+
+    # for game in lista:
+
+    #     print(game.nodes[0])
+    #     break
+
     ai = AiComputer()
+
+    fen_raw = "rn2kbnr/pp1ppppp/8/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
+    ai.predict_full(fen_raw)

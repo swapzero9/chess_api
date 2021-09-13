@@ -31,5 +31,5 @@ class RandomComputer(Computer):
 
         move = legal_moves[r]
 
-        time.sleep(self.timeout)
+        # time.sleep(self.timeout)
         return move
