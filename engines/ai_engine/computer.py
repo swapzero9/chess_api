@@ -46,13 +46,12 @@ class AiComputer(Computer):
             ten.unsqueeze_(0)
             ret = self.model(ten)
 
-            # cp["prediction"] = cp.apply(lambda x:torch.from_numpy(ret.to_numpy()), axis=1)
             batch_size = list(ret.size())[0]
+            cp = self.moves.copy()
             for b in range(batch_size):
                 a = ret[b, :]
                 
-                cp = self.moves.copy()
-                cp[f"prediction"] = a.tolist()
+                cp[f"prediction_{b}"] = a.tolist()
                 # cp = cp.sort_values(by="prediction", ascending=True)
                 
                 # legal_moves
@@ -61,10 +60,13 @@ class AiComputer(Computer):
                 for move in legal:
                     uci.append(move.uci())
 
-                cp["legal"] = cp["move"]
-                cp["legal"] = cp["legal"].isin(uci)
-                cp = cp.sort_values(by=["legal", "prediction"], ascending=[False, False])
+                cp[f"legal_{b}"] = cp["move"]
+                cp[f"legal_{b}"] = cp[f"legal_{b}"].isin(uci)
+                cp = cp.sort_values(by=[f"legal_{b}", "prediction"], ascending=[False, False])
                 print(cp)
+
+            return cp
+
 
 
     @classmethod
