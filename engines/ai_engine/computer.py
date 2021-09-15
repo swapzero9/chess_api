@@ -24,7 +24,6 @@ class AiComputer(Computer):
         self.tsfm = AiComputer.TransformToTensor()
         self.moves = pd.read_csv("./api/utils/all_moves_generator/all_moves.csv")
         self.dataset = None
-
         # fen_raw = "rn2kbnr/pp1ppppp/8/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
         # fen = fen_raw.split(" ")[0]
         # a = self.tsfm(fen)
@@ -37,14 +36,13 @@ class AiComputer(Computer):
     def predict(self, fen):
         with torch.no_grad():
             ten = self.tsfm(fen)
-            ten.unsqueeze_(0)
             ret = self.model(ten)
-            return self.moves[torch.argmax(ret).item(), 0]
+            return self.moves.iloc[torch.argmax(ret).item()]
 
     def predict_full(self, fen):
         with torch.no_grad():
+            print(fen)
             ten = self.tsfm(fen)
-            ten.unsqueeze_(0)
             ret = self.model(ten)
 
             batch_size = list(ret.size())[0]
@@ -70,11 +68,7 @@ class AiComputer(Computer):
     def create_dataset(self, query):
 
         # get all the nodes from graph element with the given nodename
-        self.dataset = AiComputer.ChessMovesDataset(
-            query_nodes=query, 
-            transform1=AiComputer.TranformToFenlist(),
-            transform2=AiComputer.TransformToTensor()
-        )
+        self.dataset = AiComputer.ChessMovesDataset(query_nodes=query)
 
     class Net(nn.Module):
         def __init__(self):
@@ -99,33 +93,38 @@ class AiComputer(Computer):
         # class for future building of chess moves dataset
         # multiple games into one 
 
-        def __init__(self, query_nodes, transform1=None, transform2=None):
+        def __init__(self, query_nodes, transform=None):
             """
             query must have pgn in order to be added to games dataset
             and the last element must be the Game Node
             otherwise error
             """
-            # assert transform2 is not None and transform1 is None
-            self.games = list()
-            for game in query_nodes:
-                assert "Game" in game.nodes[-1].labels 
-                self.games.append(dict(game.nodes[-1]))
+
+            self.tf1 = AiComputer.TranformToFenlist()
+            self.tf2 = transform
             
-            self.tf1 = transform1
-            self.tf2 = transform2
+            # assert transform2 is not None and transform1 is None
+            self.games_moves = list()
+            for game in query_nodes:
+                assert "Game" in game.nodes[-1].labels
+                
+                temp = dict(game.nodes[-1])
+                assert temp["game_pgn"] is not None
+
+                temp_moves = self.tf1(temp["game_pgn"])
+                for move in temp_moves:
+                    if move not in self.games_moves:
+                        self.games_moves.append(move)
 
         def __len__(self):
-            return len(self.games)
+            return len(self.games_moves)
 
         def __getitem__(self, idx):
 
-            item = self.games[idx]
-            game = item["game_pgn"]
-            if self.tf1 is not None:
-                game = self.tf1(game)
-                if self.tf2 is not None:
-                    game = self.tf2(game)
-            return game
+            item = self.games_moves[idx]
+            if self.tf2 is not None:
+                item = self.tf2(item)
+            return item
 
 
     class TranformToFenlist(object):
@@ -158,17 +157,13 @@ class AiComputer(Computer):
         def __call__(self, inp):
             assert isinstance(inp, list) or isinstance(inp, str)
 
-            print(inp)
-            print(type(inp))
             if isinstance(inp, list):
                 t = list()
                 for i in range(len(inp)):
                     t.append(AiComputer.TransformToTensor.handle_single_fen(inp[i]))
                 return t
             else:
-                t = torch.zeros((1,1,8,8), device=AiComputer.cuda_device)
-                print(t.size())
-                t[0,:,:,:] = AiComputer.TransformToTensor.handle_single_fen(inp)
+                t = AiComputer.TransformToTensor.handle_single_fen(inp)
                 return t
         
         @staticmethod
@@ -314,7 +309,9 @@ if __name__ == "__main__":
     
     ai.create_dataset(res)
 
-    dt = DataLoader(ai.dataset, batch_size=2)
+    dt = DataLoader(ai.dataset, batch_size=4, shuffle=True)
 
-    # for i in range(len(ai.dataset)):
-    a = ai.dataset[0]
+    for i in enumerate(dt):
+        t = ai.predict_full(i[1])
+        print(t)
+        break

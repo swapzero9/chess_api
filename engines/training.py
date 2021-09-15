@@ -2,7 +2,6 @@ import chess, chess.pgn, math
 from datetime import datetime
 import api.utils.decorators
 
-# from api.database.neo4j_driver import Neo4j_Driver, NeoNode, NeoRelationship
 from py2neo import Graph, Node, Relationship
 
 class TrainingSession:
@@ -24,6 +23,7 @@ class TrainingSession:
         tx.create(self.training_session_node)
         self.db.commit(tx)
 
+    @api.utils.decorators.timer
     def train(self):
         for i in range(self.amount_of_games):
             # start a game
@@ -65,7 +65,6 @@ class TrainingSession:
                     node = node.add_variation(move)
 
             pgn.headers["Result"] = game.result()
-            print(type(str(pgn)))
             game_node = Node(
                 "Game",
                 timestamp=datetime.today(),
@@ -81,4 +80,3 @@ class TrainingSession:
             tx.create(game_node)
             tx.create(played_relationship)
             self.db.commit(tx)
-            

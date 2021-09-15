@@ -1,8 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .chessboards import puzzles_chess
-from .chessboards import duel_chess
+from api.chessboards import puzzles_chess
+from api.chessboards import duel_chess
 
 app = FastAPI()
 

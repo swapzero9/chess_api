@@ -19,7 +19,7 @@ def main():
     white = RandomComputer("b")
 
 
-    t = TrainingSession(white, black, 20)
+    t = TrainingSession(white, black, 50)
     t.train()
 
 
