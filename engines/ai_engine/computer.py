@@ -1,10 +1,10 @@
 from numpy.core.fromnumeric import argmax
-from torch._C import device
+from pprint import pprint
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
 from api.engines.template_computer import Computer
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 import chess, chess.pgn
 import pandas as pd
 
@@ -23,10 +23,11 @@ class AiComputer(Computer):
         self.model.to(self.cuda_device)
         self.tsfm = AiComputer.TransformToTensor()
         self.moves = pd.read_csv("./api/utils/all_moves_generator/all_moves.csv")
+        self.dataset = None
 
         # fen_raw = "rn2kbnr/pp1ppppp/8/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
         # fen = fen_raw.split(" ")[0]
-        # a = tsfm(fen)
+        # a = self.tsfm(fen)
         # print(a)
         # ten.unsqueeze_(0)
         # ten.unsqueeze_(0)
@@ -62,20 +63,18 @@ class AiComputer(Computer):
 
                 cp[f"legal_{b}"] = cp["move"]
                 cp[f"legal_{b}"] = cp[f"legal_{b}"].isin(uci)
-                cp = cp.sort_values(by=[f"legal_{b}", "prediction"], ascending=[False, False])
-                print(cp)
+                cp = cp.sort_values(by=[f"legal_{b}", f"prediction_{b}"], ascending=[False, False])
 
             return cp
 
-
-
-    @classmethod
     def create_dataset(self, query):
 
         # get all the nodes from graph element with the given nodename
-        dataset = AiComputer.ChessMovesDataset(query)
-        print(dataset[0])
-        pass
+        self.dataset = AiComputer.ChessMovesDataset(
+            query_nodes=query, 
+            transform1=AiComputer.TranformToFenlist(),
+            transform2=AiComputer.TransformToTensor()
+        )
 
     class Net(nn.Module):
         def __init__(self):
@@ -98,15 +97,22 @@ class AiComputer(Computer):
 
     class ChessMovesDataset(Dataset):
         # class for future building of chess moves dataset
+        # multiple games into one 
 
-        def __init__(self, query_nodes, transform=None):
+        def __init__(self, query_nodes, transform1=None, transform2=None):
             """
             query must have pgn in order to be added to games dataset
+            and the last element must be the Game Node
+            otherwise error
             """
-
+            # assert transform2 is not None and transform1 is None
             self.games = list()
-            for node in query_nodes:
-                self.games.append(node.labels[0])
+            for game in query_nodes:
+                assert "Game" in game.nodes[-1].labels 
+                self.games.append(dict(game.nodes[-1]))
+            
+            self.tf1 = transform1
+            self.tf2 = transform2
 
         def __len__(self):
             return len(self.games)
@@ -114,7 +120,12 @@ class AiComputer(Computer):
         def __getitem__(self, idx):
 
             item = self.games[idx]
-            return item
+            game = item["game_pgn"]
+            if self.tf1 is not None:
+                game = self.tf1(game)
+                if self.tf2 is not None:
+                    game = self.tf2(game)
+            return game
 
 
     class TranformToFenlist(object):
@@ -143,14 +154,32 @@ class AiComputer(Computer):
 
         def __init__(self):
             pass
+        
+        def __call__(self, inp):
+            assert isinstance(inp, list) or isinstance(inp, str)
 
-        def __call__(self, fen):
+            print(inp)
+            print(type(inp))
+            if isinstance(inp, list):
+                t = list()
+                for i in range(len(inp)):
+                    t.append(AiComputer.TransformToTensor.handle_single_fen(inp[i]))
+                return t
+            else:
+                t = torch.zeros((1,1,8,8), device=AiComputer.cuda_device)
+                print(t.size())
+                t[0,:,:,:] = AiComputer.TransformToTensor.handle_single_fen(inp)
+                return t
+        
+        @staticmethod
+        def handle_single_fen(fen: str):
             if len(fen.split(" ")) > 1:
                 fen = fen.split(" ")[0]
             ranks = fen.split("/")
             i = 0
             rank_tensor = torch.zeros(
-                8, 8, dtype=torch.float32, device=AiComputer.cuda_device
+                8, 8, dtype=torch.float32, 
+                device=AiComputer.cuda_device
             )
             for rank in ranks:
                 j = 0
@@ -269,22 +298,23 @@ class AiComputer(Computer):
 
 if __name__ == "__main__":
 
-    # db = Graph("bolt://localhost:7687", auth=("neo4j", "s3cr3t"))
-    # matcher = NodeMatcher(db)
-
-    # games = matcher.match("Game").all()
-    # sessions = matcher.match("TrainingNode").first()
-
-    # rel_matcher = RelationshipMatcher(db)
-    # res = rel_matcher.match((sessions, None), "Played")
-    # lista = list(res)
-
-    # for game in lista:
-
-    #     print(game.nodes[0])
-    #     break
-
     ai = AiComputer()
 
     fen_raw = "rn2kbnr/pp1ppppp/8/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
-    ai.predict_full(fen_raw)
+    # print(ai.predict_full(fen_raw))
+
+    db = Graph("bolt://localhost:7687", auth=("neo4j", "s3cr3t"))
+    matcher = NodeMatcher(db)
+
+    games = matcher.match("Game").all()
+    sessions = matcher.match("TrainingNode").first()
+
+    rel_matcher = RelationshipMatcher(db)
+    res = rel_matcher.match((sessions, None), "Played").all()
+    
+    ai.create_dataset(res)
+
+    dt = DataLoader(ai.dataset, batch_size=2)
+
+    # for i in range(len(ai.dataset)):
+    a = ai.dataset[0]
