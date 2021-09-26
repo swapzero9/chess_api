@@ -3,14 +3,15 @@ from api.engines.template_computer import Computer
 
 
 class RandomComputer(Computer):
-    def __init__(self, side):
+    def __init__(self):
         """
         takes an engine argument as a variable which is pytorch nn class
         side argument is for verification which side is Computer playing
         timeout just for not calculating deep enough
         """
+        self.__name__ = "RandomComputer"
         self.timeout = 0.5
-        super().__init__(side)
+        super().__init__("b")
         pass
 
     def think(self, fen: str) -> chess.Move:
