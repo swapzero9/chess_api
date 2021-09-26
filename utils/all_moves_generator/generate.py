@@ -46,6 +46,38 @@ def generate_file():
 				output_file.write(f"{move.uci()}\n")
 				m += 1
 
+	# promotions from 2-1 and from 7-8
+	# 3 moves from each central square, 
+	# 2 moves from the sides,
+	# 4 promotion options
+	temp = "8/PPPPPPPP/8/8/8/8/pppppppp/8 w - - 0 1"
+	prom = chess.Board(temp).legal_moves
+
+	# pawn pushes
+	for move in list(prom):
+		output_file.write(f"{move.uci()}\n")
+
+	temp = "nnnnnnnn/PPPPPPPP/8/8/8/8/pppppppp/8 w - - 0 1"
+	prom = chess.Board(temp).legal_moves
+
+	# pawn takes
+	for move in list(prom):
+		output_file.write(f"{move.uci()}\n")
+
+	# repeat for black side
+	temp = "8/PPPPPPPP/8/8/8/8/pppppppp/8 b - - 0 1"
+	prom = chess.Board(temp).legal_moves
+
+	# pawn pushes
+	for move in list(prom):
+		output_file.write(f"{move.uci()}\n")
+
+	temp = "8/PPPPPPPP/8/8/8/8/pppppppp/NNNNNNNN b - - 0 1"
+	prom = chess.Board(temp).legal_moves
+
+	# pawn takes
+	for move in list(prom):
+		output_file.write(f"{move.uci()}\n")
 
 def test_fen(fen):
 
@@ -68,4 +100,4 @@ if __name__ == "__main__":
 	# final output size from ai nn
 	generate_file()
 
-	test_fen("rnbqkbnr/ppppp1pp/8/4Pp2/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1")
+	test_fen("8/1P6/8/8/8/8/8/8 w - - 0 1")

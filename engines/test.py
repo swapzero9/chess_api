@@ -2,6 +2,7 @@ from py2neo import Graph, Node
 import api.utils.decorators as d
 from api.engines.random_engine.computer import RandomComputer
 from api.engines.training import TrainingSession
+from api.engines.ai_engine.computer import AiComputer
 
 
 @d.timer
@@ -15,14 +16,12 @@ def main():
     # a = Node("Penice", name="asd")
     # tx.create(a)
     # db.commit(tx)
-    black = RandomComputer("w")
-    white = RandomComputer("b")
+    white = AiComputer()
+    black = RandomComputer()
 
 
-    t = TrainingSession(white, black, 50)
+    t = TrainingSession("First_Ai_game", white, black, 10)
     t.train()
-
-
 
 if __name__ == "__main__":
     main()
