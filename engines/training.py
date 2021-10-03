@@ -1,4 +1,4 @@
-import chess, chess.pgn, math
+import chess, chess.pgn, math, torch
 from datetime import datetime
 import api.utils.decorators
 from api.utils.garbage_functions import method_exists
@@ -6,18 +6,18 @@ from api.utils.garbage_functions import method_exists
 from py2neo import Graph, Node, Relationship, NodeMatcher, RelationshipMatcher
 
 class TrainingSession:
-    def __init__(self, name:str, engine_white, engine_black, amount: int = 10):
+    def __init__(self, name:str, engine_white, engine_black, amount=None):
         self.engine_white = engine_white
         self.engine_black = engine_black
         self.amount_of_iterations = amount
-        self.games_in_iteration = 10
+        self.games_in_iteration = 3
 
         # self.training_session_node = NeoNode("TrainingNode", d)
         self.training_session_node = Node(
             "TrainingNode",
             name=name,
             date_start=datetime.today(),
-            amount=self.amount_of_iterations * self.games_in_iteration,
+            amount=("Infinity" if self.amount_of_iterations is None else self.amount_of_iterations * self.games_in_iteration),
         )
         self.db = Graph("bolt://localhost:7687", auth=("neo4j", "s3cr3t"))
 
@@ -27,7 +27,9 @@ class TrainingSession:
 
     @api.utils.decorators.timer
     def train(self):
-        for i in range(self.amount_of_iterations):
+
+        rang = range(self.amount_of_iterations) if self.amount_of_iterations is not None else iter(int, 1)
+        for i in rang:
 
             # iteration node related to training_session_node
             iteration_node = Node(
@@ -35,6 +37,7 @@ class TrainingSession:
                 iteration=i,
                 timestamp=datetime.today()
             )
+            i += 1
             iter_relationship = Relationship(self.training_session_node, "Iteration", iteration_node)
             tx = self.db.begin()
             tx.create(iteration_node)
@@ -51,16 +54,26 @@ class TrainingSession:
 
             # training and stuff
             if method_exists(self.engine_white, "learn"):
-                self.engine_white.learn("w", q)
+                pass
+                temp = self.engine_white.learn("w", q)
+                iteration_node["best_game_white_pgn"] = temp["game_pgn"]
+                tx = self.db.begin()
+                tx.graph.push(iteration_node)
+                tx.commit()
 
             if method_exists(self.engine_white, "save_model"):
-                self.engine_white.save_model()
+                self.engine_white.save_model("model_white.pt")
 
             if method_exists(self.engine_black, "learn"):
-                self.engine_white.learn("b", q)
+                pass
+                temp = self.engine_black.learn("b", q)
+                iteration_node["best_game_black_pgn"] = temp["game_pgn"]
+                tx = self.db.begin()
+                tx.graph.push(iteration_node)
+                tx.commit()
 
             if method_exists(self.engine_black, "save_model"):
-                self.engine_white.save_model()
+                self.engine_white.save_model("model_black.pt")
 
             # swap engines around
             # for the future boi
@@ -112,6 +125,7 @@ class TrainingSession:
         wc = self.engine_white.__name__ if game.result() == "1-0" else (self.engine_black.__name__ if game.result() == "0-1" else "none")
 
         pgn.headers["Result"] = game.result()
+        print(game.result())
         game_node = Node(
             "Game",
             timestamp=datetime.today(),

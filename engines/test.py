@@ -17,10 +17,10 @@ def main():
     # tx.create(a)
     # db.commit(tx)
     white = AiComputer()
-    black = RandomComputer()
+    black = AiComputer()
 
 
-    t = TrainingSession("First_Ai_game", white, black, 10)
+    t = TrainingSession("Ai_training", white, black)
     t.train()
 
 if __name__ == "__main__":

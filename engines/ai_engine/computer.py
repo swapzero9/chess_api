@@ -1,12 +1,11 @@
-from numpy.core.fromnumeric import argmax
+from api.utils.decorators import timer
 from pprint import pprint
-from torch._C import device
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
 from api.engines.template_computer import Computer
 from torch.utils.data import Dataset, DataLoader
-import chess, chess.pgn
+import chess, chess.pgn, time
 import pandas as pd
 import os
 from api.utils.castling_move_number.castle import castle_move
@@ -20,9 +19,9 @@ class AiComputer(Computer):
 
     # global cuda_devie
     cuda_device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    __name__ = "AiComputer"
 
-    def __init__(self):
-        self.__name__ = "AiComputer"
+    def __init__(self, load_model=False):
         self.model = AiComputer.Net()
         self.model.to(self.cuda_device)
         self.tsfm = AiComputer.TransformToTensor()
@@ -30,16 +29,21 @@ class AiComputer(Computer):
         self.dataset = None
         self.model_path = "./api/engines/ai_engine/models"
 
-        m = os.listdir(self.model_path)
-        if "model.pt" in m:
-            self.model.load_state_dict(torch.load(f"{self.model_path}/model.pt"))
+        if load_model:
+            m = os.listdir(self.model_path)
+            if "model.pt" in m:
+                self.model.load_state_dict(torch.load(f"{self.model_path}/model.pt"))
 
-        self.optimizer = torch.optim.SGD(self.model.parameters(), lr=0.01)
+        self.optimizer = torch.optim.SGD(self.model.parameters(), lr=0.50)
         self.loss_criterion = nn.MSELoss()
 
-    def save_model(self):
+        self.legal_move_reward = 1
+        self.decay = 0.99
+        self.min_legal_move_reward = 0.3
+
+    def save_model(self, name="model.pt"):
         if self.model is not None:
-            torch.save(self.model.state_dict(), f"{self.model_path}/model.pt")
+            torch.save(self.model.state_dict(), f"{self.model_path}/{name}")
 
     def think(self, fen: str) -> chess.Move:
 
@@ -75,31 +79,30 @@ class AiComputer(Computer):
     def predict_full(self, inp):
 
         # multiple moves out of transform
-        fens = inp[0]
+        fens = inp[0]["fen"]
+        best = inp[0]["best_game"]
+        played_move = inp[0]["played_move"]
+        won = inp[0]["winner"]
         tens = inp[1][0]
         desc = inp[1][1]
-        desc.squeeze_(0)
         ret = self.model(tens, desc)
         batch_size = list(ret.size())[0]
-        cp = self.moves.copy()
+        
+        target = torch.zeros(ret.shape, device=ret.device)
         for b in range(batch_size):
-            a = ret[b, :]
-                
-            cp[f"prediction_{b}"] = a.tolist()
-            # cp = cp.sort_values(by="prediction", ascending=True)
-                
-            # legal_moves
-            legal = chess.Board(fens[b]).legal_moves
-            uci = list()
-            for move in legal:
-                uci.append(move.uci())
+            fen = fens[b]
+            legales = list(chess.Board(fen).legal_moves)
+            uci_legales = [m.uci() for m in legales]
+            for index, row in self.moves.iterrows():
+                move = row["move"]
+                if move in uci_legales:
+                    target[b, index] = self.legal_move_reward
+                    if best[b].item() and move == played_move[b]:
+                        target[b, index] = 10 if won[b].item() else 1
 
-            cp[f"legal_{b}"] = cp["move"]
-            cp[f"legal_{b}"] = cp[f"legal_{b}"].isin(uci)
-            cp = cp.sort_values(by=[f"legal_{b}", f"prediction_{b}"], ascending=[False, False])
+        return ret, target
 
-        return cp
-
+    @timer
     def learn(self, side, query):
         
         # sort the games by won and by move number
@@ -108,58 +111,63 @@ class AiComputer(Computer):
         best_game["index"] = 0
         best_game["winner"] = query[0].nodes[-1]["winner_c"]
         best_game["move_number"] = query[0].nodes[-1]["number_of_moves"]
+        best_game["game_pgn"] = query[0].nodes[-1]["game_pgn"]
 
         for i in range(1, len(query)):
 
             game = query[i].nodes[-1]
             winner = game["winner_c"]
             move_number = game["number_of_moves"]
-            pprint({
-                winner,
-                move_number
-            })
 
-            if winner == self.__name__ and winner != best_game["winner"]:
+            if winner == AiComputer.__name__ and winner != best_game["winner"]:
                 # first won game in batch
                 best_game["index"] = i
                 best_game["winner"] = winner
                 best_game["move_number"] = move_number
-            elif winner == self.__name__ and winner == best_game["winner"] and move_number < best_game["move_number"]:
+                best_game["game_pgn"] = query[i].nodes[-1]["game_pgn"]
+            elif winner == AiComputer.__name__ and winner == best_game["winner"] and move_number < best_game["move_number"]:
                 # n-th won game but faster
                 best_game["index"] = i
                 best_game["winner"] = winner
                 best_game["move_number"] = move_number
-            elif winner != self.__name__ and best_game["winner"] != self.__name__ and move_number > best_game["move_number"]:
+                best_game["game_pgn"] = query[i].nodes[-1]["game_pgn"]
+            elif winner != AiComputer.__name__ and best_game["winner"] != AiComputer.__name__ and move_number > best_game["move_number"]:
                 # not won but a lot of resistance put into the fight
                 best_game["index"] = i
                 best_game["winner"] = winner
                 best_game["move_number"] = move_number
+                best_game["game_pgn"] = query[i].nodes[-1]["game_pgn"]
             else:
                 # no better game found
                 pass
-        pprint(best_game)
 
-        d = AiComputer.create_dataset(query, side)
-        loader = DataLoader(d, batch_size=1)
-        
+        d = AiComputer.create_dataset(query, side, best_game)
+        loader = DataLoader(d, batch_size=10, shuffle=True)
+        print(f"len of dataset: {len(d)}")
+        t = time.time()
+
         for a, b in enumerate(loader):
-            # print(b[0][0]) # fen
-            # print(b[1][0]) # ten
-            # print(b[1][1]) # additional
-            # print(b[1]) # tensors and shit
-            c = self.predict_full(b)
+            net_ret, target = self.predict_full(b)
+            self.optimizer.zero_grad()
+            loss = self.loss_criterion(net_ret, target)
+            # print(f"Loss equal to: {loss.item()}")
+            loss.backward()
+            self.optimizer.step()
 
-            print(self.model.conv1)
-            break
+        if self.legal_move_reward > self.min_legal_move_reward:
+            self.legal_move_reward = self.legal_move_reward * self.decay
+
+        return best_game
 
     @staticmethod
-    def create_dataset(query, side):
+    def create_dataset(query, side, best):
 
         # get all the nodes from graph element with the given nodename
         dataset = AiComputer.ChessMovesDataset(
             query_nodes=query,
             side=side,
-            transform=AiComputer.TransformToTensor()
+            transform=AiComputer.TransformToTensor(),
+            best_index=best["index"]
         )
 
         return dataset
@@ -171,13 +179,14 @@ class AiComputer(Computer):
             self.conv1 = nn.Conv2d(1, 50, 2)
             self.conv2 = nn.Conv2d(50, 4000, 1)
             self.pool = nn.MaxPool2d(2,2)
-            self.fc1 = nn.Linear(400 + 21, 3600)
+            self.fc1 = nn.Linear(4000 + 21, 3600)
             self.fc2 = nn.Linear(3600, 1968)
 
         def forward(self, x1, x2):
             x1 = self.pool(F.mish(self.conv1(x1)))
             x1 = self.pool(F.mish(self.conv2(x1)))
             x1 = torch.flatten(x1, 1)
+            x2 = torch.flatten(x2, 1)
             x = torch.cat((x1, x2), dim=1)
             x = F.mish(self.fc1(x))
             x = F.softmax(self.fc2(x))
@@ -187,7 +196,7 @@ class AiComputer(Computer):
         # class for future building of chess moves dataset
         # multiple games into one 
 
-        def __init__(self, query_nodes, side, transform=None):
+        def __init__(self, query_nodes, side, transform=None, best_index=0):
             """
             query must have pgn in order to be added to games dataset
             and the last element must be the Game Node
@@ -198,27 +207,43 @@ class AiComputer(Computer):
             self.tf2 = transform
             
             # assert transform2 is not None and transform1 is None
-            self.games_moves = list()
+            self.games_positions = list()
+            i = 0 
             for game in query_nodes:
                 assert "Game" in game.nodes[-1].labels
                 
                 temp = dict(game.nodes[-1])
                 assert temp["game_pgn"] is not None
 
-                temp_moves = self.tf1(temp["game_pgn"])
-                for move in temp_moves:
-                    if move not in self.games_moves:
-                        self.games_moves.append(move)
+                temp_fens, temp_moves = self.tf1(temp["game_pgn"])
+                if len(temp_moves) != len(temp_fens):
+                    if len(temp_fens) > len(temp_moves):
+                        temp_fens.pop()
+                    else:
+                        temp_moves.pop()
+                assert len(temp_fens) == len(temp_moves)
+
+                for j in range(len(temp_fens)):
+                    fenn = temp_fens[j]
+                    move = temp_moves[j]
+                    if fenn not in self.games_positions:
+                        item = dict()
+                        item["fen"] = fenn
+                        item["best_game"] = i == best_index
+                        item["played_move"] = move
+                        item["winner"] = temp["winner_c"] == AiComputer.__name__
+                        self.games_positions.append(item)
+                i += 1
 
         def __len__(self):
-            return len(self.games_moves)
+            return len(self.games_positions)
 
         def __getitem__(self, idx):
 
-            item = self.games_moves[idx]
+            item = self.games_positions[idx]
             ten = ""
             if self.tf2 is not None:
-                ten = self.tf2(item)
+                ten = self.tf2(item["fen"])
             return item, ten
 
 
@@ -228,21 +253,33 @@ class AiComputer(Computer):
         """
 
         def __init__(self, side):
-            self.side = True if "w" else False
+            self.side = True if side == "w" else False
             pass
 
         def __call__(self, pgn_string):
             act_pgn = io.StringIO(pgn_string)
             game = chess.pgn.read_game(act_pgn)
 
+            positions_to_play = list()
             move_list = list()
             board = game.board()
+            next = False
+            if self.side:
+                positions_to_play.append(board.fen())
+                next = True
+
             for move in game.mainline_moves():
-                t = self.side == board.turn
+                if next:
+                    move_list.append(move.uci())
+                    next = False
                 board.push(move)
+                t = self.side == board.turn
                 if t:
-                    move_list.append(board.fen())
-            return move_list
+                    positions_to_play.append(board.fen())
+                    next = True
+                
+
+            return positions_to_play, move_list
 
     class TransformToTensor(object):
         """
@@ -296,59 +333,42 @@ class AiComputer(Computer):
 
     @staticmethod
     def piece_2_number(letter):
-        if letter == "p":
-            return 1
-        elif letter == "r":
-            return 2
-        elif letter == "n":
-            return 3
-        elif letter == "b":
-            return 4
-        elif letter == "q":
-            return 5
-        elif letter == "k":
-            return 6
-        elif letter == "P":
-            return 7
-        elif letter == "R":
-            return 8
-        elif letter == "N":
-            return 9
-        elif letter == "B":
-            return 10
-        elif letter == "Q":
-            return 11
-        elif letter == "K":
-            return 12
+        temp = {
+            "p": 1,
+            "r": 2,
+            "n": 3,
+            "b": 4,
+            "q": 5,
+            "k": 6,
+            "P": 7,
+            "R": 8,
+            "N": 9,
+            "B": 10,
+            "Q": 11,
+            "K": 12
+        }
+        return temp[letter]
 
     @staticmethod
     def number_2_piece(number):
-        if number == 1:
-            return "p"
-        elif number == 2:
-            return "r"
-        elif number == 3:
-            return "n"
-        elif number == 4:
-            return "b"
-        elif number == 5:
-            return "q"
-        elif number == 6:
-            return "k"
-        elif number == 7:
-            return "P"
-        elif number == 8:
-            return "R"
-        elif number == 9:
-            return "N"
-        elif number == 10:
-            return "B"
-        elif number == 11:
-            return "Q"
-        elif number == 12:
-            return "K"
-        else:
+        temp = {
+            1: "p",
+            2: "r",
+            3: "n",
+            4: "b",
+            5: "q",
+            6: "k",
+            7: "P",
+            8: "R",
+            9: "N",
+            10: "B",
+            11: "Q",
+            12: "K",
+        }
+        if number not in temp:
             return None
+        else:
+            return temp[number]
 
     @staticmethod
     def fen_2_tensor(fen):
@@ -408,17 +428,6 @@ if __name__ == "__main__":
 
     rel_matcher = RelationshipMatcher(db)
     res = rel_matcher.match((sessions, None), "Played").all()
-    
-    # ai.create_dataset(res)
-
-    # dt = DataLoader(ai.dataset, batch_size=4, shuffle=True)
-
-    # for i in enumerate(dt):
-
-    #     pprint(i[1])
-    #     t = ai.predict_full(i[1])
-    #     print(t)
-    #     break
 
     f = "r2qkb1r/pppn1ppp/8/3Pp3/4Q3/8/PP1P1PPP/R1B1KBNR w KQkq e6 0 8"
     print(ai.predict_single(f))
