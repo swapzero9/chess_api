@@ -1,3 +1,4 @@
+import itertools
 import chess, chess.pgn, math, torch
 from datetime import datetime
 import api.utils.decorators
@@ -28,7 +29,15 @@ class TrainingSession:
     @api.utils.decorators.timer
     def train(self):
 
-        rang = range(self.amount_of_iterations) if self.amount_of_iterations is not None else iter(int, 1)
+        def count(start=0, step=1):
+            # count(10) --> 10 11 12 13 14 ...
+            # count(2.5, 0.5) -> 2.5 3.0 3.5 ...
+            n = start
+            while True:
+                yield n
+                n += step
+
+        rang = range(self.amount_of_iterations) if self.amount_of_iterations is not None else itertools.count()
         for i in rang:
 
             # iteration node related to training_session_node
@@ -44,9 +53,8 @@ class TrainingSession:
             tx.create(iter_relationship)
             self.db.commit(tx)
 
-            for j in range(self.games_in_iteration):
-                # multiThreading?
-                self.single_game(iteration_node)
+            # single game
+            self.single_game(iteration_node)
 
             # get games from the current iteration
             rel_matcher = RelationshipMatcher(self.db)
@@ -55,25 +63,18 @@ class TrainingSession:
             # training and stuff
             if method_exists(self.engine_white, "learn"):
                 pass
-                temp = self.engine_white.learn("w", q)
-                iteration_node["best_game_white_pgn"] = temp["game_pgn"]
-                tx = self.db.begin()
-                tx.graph.push(iteration_node)
-                tx.commit()
-
-            if method_exists(self.engine_white, "save_model"):
-                self.engine_white.save_model("model_white.pt")
+                self.engine_white.learn("w", q)
+                
 
             if method_exists(self.engine_black, "learn"):
-                pass
-                temp = self.engine_black.learn("b", q)
-                iteration_node["best_game_black_pgn"] = temp["game_pgn"]
-                tx = self.db.begin()
-                tx.graph.push(iteration_node)
-                tx.commit()
+                self.engine_black.learn("b", q)
 
-            if method_exists(self.engine_black, "save_model"):
-                self.engine_white.save_model("model_black.pt")
+            if i % 1000 == 0:
+                if method_exists(self.engine_white, "save_model"):
+                    self.engine_white.save_model("model_white.pt")
+
+                if method_exists(self.engine_black, "save_model"):
+                    self.engine_white.save_model("model_black.pt")
 
             # swap engines around
             # for the future boi
@@ -125,7 +126,6 @@ class TrainingSession:
         wc = self.engine_white.__name__ if game.result() == "1-0" else (self.engine_black.__name__ if game.result() == "0-1" else "none")
 
         pgn.headers["Result"] = game.result()
-        print(game.result())
         game_node = Node(
             "Game",
             timestamp=datetime.today(),

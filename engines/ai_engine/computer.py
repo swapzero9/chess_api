@@ -38,7 +38,7 @@ class AiComputer(Computer):
         self.loss_criterion = nn.MSELoss()
 
         self.legal_move_reward = 1
-        self.decay = 0.99
+        self.decay = 0.99999
         self.min_legal_move_reward = 0.3
 
     def save_model(self, name="model.pt"):
@@ -76,13 +76,11 @@ class AiComputer(Computer):
         # cp = cp.sort_values(by=f"prediction", ascending=False)
         return cp.iloc[0]["move"]
 
-    def predict_full(self, inp):
+    def predict_full(self, inp, reward):
 
         # multiple moves out of transform
         fens = inp[0]["fen"]
-        best = inp[0]["best_game"]
         played_move = inp[0]["played_move"]
-        won = inp[0]["winner"]
         tens = inp[1][0]
         desc = inp[1][1]
         ret = self.model(tens, desc)
@@ -96,58 +94,30 @@ class AiComputer(Computer):
             for index, row in self.moves.iterrows():
                 move = row["move"]
                 if move in uci_legales:
-                    target[b, index] = self.legal_move_reward
-                    if best[b].item() and move == played_move[b]:
-                        target[b, index] = 10 if won[b].item() else 1
+                    target[b, index] = self.min_legal_move_reward
+                    if move == played_move[b]:
+                        target[b, index] = reward
 
         return ret, target
 
     @timer
     def learn(self, side, query):
-        
-        # sort the games by won and by move number
-        # to find the best game in batch
-        best_game = dict()
-        best_game["index"] = 0
-        best_game["winner"] = query[0].nodes[-1]["winner_c"]
-        best_game["move_number"] = query[0].nodes[-1]["number_of_moves"]
-        best_game["game_pgn"] = query[0].nodes[-1]["game_pgn"]
 
-        for i in range(1, len(query)):
+        # if won highest reward 
+        # if lost standard reward for making legal move
+        game = query[0].nodes[-1]
+        if (game["winner"] == "1-0" and side == "w") or (game["winner"] == "0-1" and side == "b"):
+            reward = 10
+        else:
+            reward = self.min_legal_move_reward
 
-            game = query[i].nodes[-1]
-            winner = game["winner_c"]
-            move_number = game["number_of_moves"]
-
-            if winner == AiComputer.__name__ and winner != best_game["winner"]:
-                # first won game in batch
-                best_game["index"] = i
-                best_game["winner"] = winner
-                best_game["move_number"] = move_number
-                best_game["game_pgn"] = query[i].nodes[-1]["game_pgn"]
-            elif winner == AiComputer.__name__ and winner == best_game["winner"] and move_number < best_game["move_number"]:
-                # n-th won game but faster
-                best_game["index"] = i
-                best_game["winner"] = winner
-                best_game["move_number"] = move_number
-                best_game["game_pgn"] = query[i].nodes[-1]["game_pgn"]
-            elif winner != AiComputer.__name__ and best_game["winner"] != AiComputer.__name__ and move_number > best_game["move_number"]:
-                # not won but a lot of resistance put into the fight
-                best_game["index"] = i
-                best_game["winner"] = winner
-                best_game["move_number"] = move_number
-                best_game["game_pgn"] = query[i].nodes[-1]["game_pgn"]
-            else:
-                # no better game found
-                pass
-
-        d = AiComputer.create_dataset(query, side, best_game)
+        d = AiComputer.create_dataset(query, side)
         loader = DataLoader(d, batch_size=10, shuffle=True)
         print(f"len of dataset: {len(d)}")
         t = time.time()
 
         for a, b in enumerate(loader):
-            net_ret, target = self.predict_full(b)
+            net_ret, target = self.predict_full(b, reward)
             self.optimizer.zero_grad()
             loss = self.loss_criterion(net_ret, target)
             # print(f"Loss equal to: {loss.item()}")
@@ -157,17 +127,14 @@ class AiComputer(Computer):
         if self.legal_move_reward > self.min_legal_move_reward:
             self.legal_move_reward = self.legal_move_reward * self.decay
 
-        return best_game
-
     @staticmethod
-    def create_dataset(query, side, best):
+    def create_dataset(query, side):
 
         # get all the nodes from graph element with the given nodename
         dataset = AiComputer.ChessMovesDataset(
             query_nodes=query,
             side=side,
-            transform=AiComputer.TransformToTensor(),
-            best_index=best["index"]
+            transform=AiComputer.TransformToTensor()
         )
 
         return dataset
@@ -196,7 +163,7 @@ class AiComputer(Computer):
         # class for future building of chess moves dataset
         # multiple games into one 
 
-        def __init__(self, query_nodes, side, transform=None, best_index=0):
+        def __init__(self, query_nodes, side, transform=None):
             """
             query must have pgn in order to be added to games dataset
             and the last element must be the Game Node
@@ -229,9 +196,7 @@ class AiComputer(Computer):
                     if fenn not in self.games_positions:
                         item = dict()
                         item["fen"] = fenn
-                        item["best_game"] = i == best_index
                         item["played_move"] = move
-                        item["winner"] = temp["winner_c"] == AiComputer.__name__
                         self.games_positions.append(item)
                 i += 1
 
