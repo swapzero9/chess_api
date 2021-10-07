@@ -21,29 +21,34 @@ class AiComputer(Computer):
     cuda_device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     __name__ = "AiComputer"
 
-    def __init__(self, load_model=False):
+    def __init__(self, *, load_model=False, model_name="model.pt"):
         self.model = AiComputer.Net()
         self.model.to(self.cuda_device)
         self.tsfm = AiComputer.TransformToTensor()
         self.moves = pd.read_csv("./api/utils/all_moves_generator/all_moves.csv")
         self.dataset = None
         self.model_path = "./api/engines/ai_engine/models"
+        self.model_name = model_name
 
         if load_model:
             m = os.listdir(self.model_path)
-            if "model.pt" in m:
-                self.model.load_state_dict(torch.load(f"{self.model_path}/model.pt"))
+            if self.model_name in m:
+                self.model.load_state_dict(torch.load(f"{self.model_path}/{self.model_name}"))
 
-        self.optimizer = torch.optim.SGD(self.model.parameters(), lr=0.50)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
         self.loss_criterion = nn.MSELoss()
 
-        self.legal_move_reward = 1
+        self.legal_move_reward = 0.7
         self.decay = 0.99999
         self.min_legal_move_reward = 0.3
 
-    def save_model(self, name="model.pt"):
+    def save_model(self, name=None):
         if self.model is not None:
-            torch.save(self.model.state_dict(), f"{self.model_path}/{name}")
+            if name is not None:
+                torch.save(self.model.state_dict(), f"{self.model_path}/{name}")
+            else:
+                torch.save(self.model.state_dict(), f"{self.model_path}/{self.model_name}")
+
 
     def think(self, fen: str) -> chess.Move:
 
@@ -107,23 +112,26 @@ class AiComputer(Computer):
         # if lost standard reward for making legal move
         game = query[0].nodes[-1]
         if (game["winner"] == "1-0" and side == "w") or (game["winner"] == "0-1" and side == "b"):
-            reward = 10
+            reward = 2
         else:
             reward = self.min_legal_move_reward
 
         d = AiComputer.create_dataset(query, side)
         loader = DataLoader(d, batch_size=10, shuffle=True)
         print(f"len of dataset: {len(d)}")
-        t = time.time()
+        
+        mean_loss = torch.zeros(1, device=AiComputer.cuda_device)  
 
         for a, b in enumerate(loader):
             net_ret, target = self.predict_full(b, reward)
             self.optimizer.zero_grad()
             loss = self.loss_criterion(net_ret, target)
+            mean_loss += loss
             # print(f"Loss equal to: {loss.item()}")
             loss.backward()
             self.optimizer.step()
 
+        print(mean_loss / len(d))
         if self.legal_move_reward > self.min_legal_move_reward:
             self.legal_move_reward = self.legal_move_reward * self.decay
 
@@ -143,20 +151,34 @@ class AiComputer(Computer):
         def __init__(self):
             super(AiComputer.Net, self).__init__()
 
-            self.conv1 = nn.Conv2d(1, 50, 2)
-            self.conv2 = nn.Conv2d(50, 4000, 1)
-            self.pool = nn.MaxPool2d(2,2)
-            self.fc1 = nn.Linear(4000 + 21, 3600)
-            self.fc2 = nn.Linear(3600, 1968)
+            self.conv1 = nn.Conv2d(1, 30, 1) 
+            self.conv2 = nn.Conv2d(30, 40, 2) 
+            self.conv3 = nn.Conv2d(40, 50, 2) # 50 x 
+
+            self.drop = nn.Dropout(p=0)
+            self.batch_norm1 = nn.BatchNorm2d(30) # maybe someday
+            self.batch_norm2 = nn.BatchNorm2d(40) # maybe someday
+            self.batch_norm3 = nn.BatchNorm2d(50) # maybe someday
+
+            self.fc1 = nn.Linear(1800 + 21, 1400)
+            self.fc2 = nn.Linear(1400, 1000)
+            self.fc3 = nn.Linear(1000, 1968)
 
         def forward(self, x1, x2):
-            x1 = self.pool(F.mish(self.conv1(x1)))
-            x1 = self.pool(F.mish(self.conv2(x1)))
-            x1 = torch.flatten(x1, 1)
-            x2 = torch.flatten(x2, 1)
-            x = torch.cat((x1, x2), dim=1)
-            x = F.mish(self.fc1(x))
-            x = F.softmax(self.fc2(x))
+            x1 = F.mish(self.conv1(x1))
+            x1 = self.batch_norm1(x1)
+            x1 = F.mish(self.conv2(x1))
+            x1 = self.batch_norm2(x1)
+            x1 = F.mish(self.conv3(x1))
+            x1 = self.batch_norm3(x1)
+
+            x = torch.cat((
+                torch.flatten(x1, 1), 
+                torch.flatten(x2, 1)
+            ), dim=1)
+            x = F.relu(self.fc1(self.drop(x)))
+            x = F.relu(self.fc2(self.drop(x)))
+            x = F.relu(self.fc3(self.drop(x)))
             return x
 
     class ChessMovesDataset(Dataset):

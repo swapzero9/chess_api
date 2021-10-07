@@ -1,0 +1,31 @@
+#######################################
+# Most recent game 
+Match (n:TrainingNode {name: ""})-->(t)-->(g:Game {}) return t.iteration, g.game_pgn order by t.iteration desc limit 1
+
+#######################################
+# Amount of games and distinct games
+Match (n:TrainingNode {name: ""})-->(t)-->(g:Game {}) return count(g.game_pgn), count(distinct g.game_pgn) 
+
+#######################################
+# Delete all games of the training Node
+Match (a:TrainingNode {name: ""})-->(b:TrainingIteration)-->(c:Game) detach delete a,b,c
+
+#######################################
+# Amount of games not drawn
+Match (n:TrainingNode {name: ""})-->(t)-->(g:Game) where g.winner <> "1/2-1/2" return count(g)
+
+#######################################
+# Most recent won game by white
+Match (n:TrainingNode {name: ""})-->(t)-->(g:Game {winner: "1-0"}) return t.iteration, g.game_pgn order by t.iteration desc limit 1
+
+#######################################
+# Most recent won game by black
+Match (n:TrainingNode {name: ""})-->(t)-->(g:Game {winner: "0-1"}) return t.iteration, g.game_pgn order by t.iteration desc limit 1
+
+#######################################
+# Amount of games won by white
+Match (n:TrainingNode {name: ""})-->(t)-->(g:Game {winner: "1-0"}) return count(g)
+
+#######################################
+# Amount of games won by black
+Match (n:TrainingNode {name: ""})-->(t)-->(g:Game {winner: "0-1"}) return count(g)
