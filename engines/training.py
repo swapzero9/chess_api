@@ -7,9 +7,14 @@ from api.utils.garbage_functions import method_exists
 from py2neo import Graph, Node, Relationship, NodeMatcher, RelationshipMatcher
 
 class TrainingSession:
-    def __init__(self, name:str, engine_white, engine_black, amount=None):
-        self.engine_white = engine_white
-        self.engine_black = engine_black
+    def __init__(self, name:str, p1, p2=None, amount=None):
+        self.player1 = p1
+        if p2 is None:
+            self.save_twice = False
+            self.player2 = p1
+        else:
+            self.save_twice = True
+            self.player2 = p2
         self.amount_of_iterations = amount
         self.games_in_iteration = 3
 
@@ -38,11 +43,12 @@ class TrainingSession:
                 n += step
 
         rang = range(self.amount_of_iterations) if self.amount_of_iterations is not None else itertools.count()
+        invert = True
         for i in rang:
 
             # iteration node related to training_session_node
             iteration_node = Node(
-                "Training_iteration",
+                "TrainingIteration",
                 iteration=i,
                 timestamp=datetime.today()
             )
@@ -54,42 +60,39 @@ class TrainingSession:
             self.db.commit(tx)
 
             # single game
-            self.single_game(iteration_node)
+            if invert:
+                self.single_game(iteration_node, self.player1, self.player2)
+            else:
+                self.single_game(iteration_node, self.player2, self.player1)
 
             # get games from the current iteration
             rel_matcher = RelationshipMatcher(self.db)
             q = rel_matcher.match((iteration_node, None), "Played").all()
 
             # training and stuff
-            if method_exists(self.engine_white, "learn"):
+            if method_exists(self.player1, "learn"):
                 pass
-                self.engine_white.learn("w", q)
+                self.player1.learn("w", q)
                 
 
-            if method_exists(self.engine_black, "learn"):
-                self.engine_black.learn("b", q)
+            if method_exists(self.player2, "learn"):
+                self.player2.learn("b", q)
 
             if i % 1000 == 0:
-                if method_exists(self.engine_white, "save_model"):
-                    self.engine_white.save_model("model_white.pt")
+                if method_exists(self.player1, "save_model"):
+                    self.player1.save_model()
 
-                if method_exists(self.engine_black, "save_model"):
-                    self.engine_white.save_model("model_black.pt")
-
-            # swap engines around
-            # for the future boi
-            # temp = self.engine_white
-            # self.engine_white = self.engine_black
-            # self.engine_black = temp
+                if self.save_twice and method_exists(self.player2, "save_model"):
+                    self.player2.save_model()
 
 
     @api.utils.decorators.timer
-    def single_game(self, iter_node):
+    def single_game(self, iter_node, player_white, player_black):
         # start a game
         game = chess.Board()
         pgn = chess.pgn.Game()
-        pgn.headers["White"] = self.engine_white.__name__
-        pgn.headers["Black"] = self.engine_black.__name__
+        pgn.headers["White"] = player_white.__name__
+        pgn.headers["Black"] = player_black.__name__
         pgn.setup(game)
         node = None
         whites_turn = True
@@ -103,7 +106,7 @@ class TrainingSession:
             # move if white
             if whites_turn:
                 while not is_legal:
-                    move = self.engine_white.think(game.fen())
+                    move = player_white.think(game.fen())
                     if move in legal_moves:
                         game.push(move)
                         whites_turn = False
@@ -112,7 +115,7 @@ class TrainingSession:
             # move if black
             else:
                 while not is_legal:
-                    move = self.engine_black.think(game.fen())
+                    move = player_black.think(game.fen())
                     if move in legal_moves:
                         game.push(move)
                         whites_turn = True
@@ -123,7 +126,7 @@ class TrainingSession:
             else:
                 node = node.add_variation(move)
 
-        wc = self.engine_white.__name__ if game.result() == "1-0" else (self.engine_black.__name__ if game.result() == "0-1" else "none")
+        wc = player_white.__name__ if game.result() == "1-0" else (player_black.__name__ if game.result() == "0-1" else "none")
 
         pgn.headers["Result"] = game.result()
         game_node = Node(
