@@ -1,31 +1,64 @@
+-------------------------------------------------------------------------------------------------------------------------
+# training game queries
+-------------------------------------------------------------------------------------------------------------------------
 #######################################
 # Most recent game 
-Match (n:TrainingNode {name: ""})-->(t)-->(g:Game {}) return t.iteration, g.game_pgn order by t.iteration desc limit 1
+MATCH (n:TrainingNode {name: ""})-->(t:TrainingIteration)-->(g:Game {}) RETURN t.iteration, g.game_pgn ORDER BY t.iteration DESC LIMIT 1
 
 #######################################
 # Amount of games and distinct games
-Match (n:TrainingNode {name: ""})-->(t)-->(g:Game {}) return count(g.game_pgn), count(distinct g.game_pgn) 
+MATCH (n:TrainingNode {name: ""})-->(t:TrainingIteration)-->(g:Game {}) RETURN COUNT(g.game_pgn), COUNT(distinct g.game_pgn) 
 
 #######################################
 # Delete all games of the training Node
-Match (a:TrainingNode {name: ""})-->(b:TrainingIteration)-->(c:Game) detach delete a,b,c
+MATCH (a:TrainingNode {name: ""})-->(b:TrainingIteration)-->(c:Game) detach delete a,b,c
 
 #######################################
 # Amount of games not drawn
-Match (n:TrainingNode {name: ""})-->(t)-->(g:Game) where g.winner <> "1/2-1/2" return count(g)
+MATCH (n:TrainingNode {name: ""})-->(t:TrainingIteration)-->(g:Game) WHERE g.winner <> "1/2-1/2" RETURN COUNT(g)
 
 #######################################
 # Most recent won game by white
-Match (n:TrainingNode {name: ""})-->(t)-->(g:Game {winner: "1-0"}) return t.iteration, g.game_pgn order by t.iteration desc limit 1
+MATCH (n:TrainingNode {name: ""})-->(t:TrainingIteration)-->(g:Game {winner: "1-0"}) RETURN t.iteration, g.game_pgn ORDER BY t.iteration DESC LIMIT 1
 
 #######################################
 # Most recent won game by black
-Match (n:TrainingNode {name: ""})-->(t)-->(g:Game {winner: "0-1"}) return t.iteration, g.game_pgn order by t.iteration desc limit 1
+MATCH (n:TrainingNode {name: ""})-->(t:TrainingIteration)-->(g:Game {winner: "0-1"}) RETURN t.iteration, g.game_pgn ORDER BY t.iteration DESC LIMIT 1
 
 #######################################
 # Amount of games won by white
-Match (n:TrainingNode {name: ""})-->(t)-->(g:Game {winner: "1-0"}) return count(g)
+MATCH (n:TrainingNode {name: ""})-->(t:TrainingIteration)-->(g:Game {winner: "1-0"}) RETURN COUNT(g)
 
 #######################################
 # Amount of games won by black
-Match (n:TrainingNode {name: ""})-->(t)-->(g:Game {winner: "0-1"}) return count(g)
+MATCH (n:TrainingNode {name: ""})-->(t:TrainingIteration)-->(g:Game {winner: "0-1"}) RETURN COUNT(g)
+
+-------------------------------------------------------------------------------------------------------------------------
+# validation game queries
+-------------------------------------------------------------------------------------------------------------------------
+#######################################
+# all games from last validation
+MATCH (n:TrainingNode {name: ""})-->(v:ValidationSession)
+WITH v
+ORDER BY v.date_start DESC
+LIMIT 1
+MATCH (v:ValidationSession)-->(vi)-->(g:Game) 
+RETURN g.game_pgn
+
+#######################################
+# all games from last validation won by Ai
+MATCH (n:TrainingNode {name: ""})-->(v:ValidationSession)
+WITH v
+ORDER BY v.date_start DESC
+LIMIT 1
+MATCH (v:ValidationSession)-->(vi)-->(g:Game {winner_c: "AiComputer"}) 
+RETURN g.game_pgn
+
+#######################################
+# all games from last validation won by Stockfish
+MATCH (n:TrainingNode {name: ""})-->(v:ValidationSession)
+WITH v
+ORDER BY v.date_start DESC
+LIMIT 1
+MATCH (v:ValidationSession)-->(vi)-->(g:Game {winner_c: "StockfishComputer"}) 
+RETURN g.game_pgn

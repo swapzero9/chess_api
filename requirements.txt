@@ -1,0 +1,6 @@
+chess
+py2neo
+fastapi
+pandas
+stockfish
+torchsummary

@@ -5,20 +5,29 @@ from api.utils.decorators import timer
 
 
 class Computer:
+    piece_score = {
+        1: 10,  # Pawn
+        2: 29,  # Knight
+        3: 30,  # Bishop
+        4: 50,  # Rook
+        5: 90,  # Queen
+        6: 1000,  # King
+    }
+
+    piece_score_text = {
+        "p": piece_score[1],
+        "n": piece_score[2], 
+        "b": piece_score[3],
+        "r": piece_score[4],
+        "q": piece_score[5],
+        "k": piece_score[6],
+    }
     def __init__(self, side):
         if side == "b":
             self.white_player = False
         else:
             self.white_player = True
 
-        self.piece_score = {
-            1: 10,  # Pawn
-            2: 29,  # Knight
-            3: 30,  # Bishop
-            4: 50,  # Rook
-            5: 90,  # Queen
-            6: 10000,  # King
-        }
         pass
 
     @staticmethod
