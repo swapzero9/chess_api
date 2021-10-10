@@ -1,10 +1,13 @@
-import itertools
-import chess, chess.pgn, math, torch
-from datetime import datetime
-import api.utils.decorators
+from api.engines.validation import Validation
 from api.utils.garbage_functions import method_exists
-
+from api.utils.logger import MyLogger
+from datetime import datetime
 from py2neo import Graph, Node, Relationship, NodeMatcher, RelationshipMatcher
+import api.utils.decorators as d
+import chess, chess.pgn, math, torch
+import itertools
+
+module_logger = MyLogger(__name__, MyLogger.DEBUG)
 
 class TrainingSession:
     def __init__(self, name:str, p1, p2=None, amount=None):
@@ -18,6 +21,7 @@ class TrainingSession:
         self.amount_of_iterations = amount
         self.games_in_iteration = 3
 
+
         # self.training_session_node = NeoNode("TrainingNode", d)
         self.training_session_node = Node(
             "TrainingNode",
@@ -27,20 +31,17 @@ class TrainingSession:
         )
         self.db = Graph("bolt://localhost:7687", auth=("neo4j", "s3cr3t"))
 
-        tx = self.db.begin()
-        tx.create(self.training_session_node)
-        self.db.commit(tx)
+        # check if training session already exists with the given name
+        # if yes raise an exception
+        matcher = NodeMatcher(self.db)
+        res = matcher.match("TrainingNode", name=name).all()
+        assert len(res) == 0 # node already exists
 
-    @api.utils.decorators.timer
+        self.validation = Validation(self.training_session_node, self.player1)
+        self.create_db_elements([self.training_session_node])
+
+    @d.timer_log
     def train(self):
-
-        def count(start=0, step=1):
-            # count(10) --> 10 11 12 13 14 ...
-            # count(2.5, 0.5) -> 2.5 3.0 3.5 ...
-            n = start
-            while True:
-                yield n
-                n += step
 
         rang = range(self.amount_of_iterations) if self.amount_of_iterations is not None else itertools.count()
         invert = True
@@ -54,10 +55,10 @@ class TrainingSession:
             )
             i += 1
             iter_relationship = Relationship(self.training_session_node, "Iteration", iteration_node)
-            tx = self.db.begin()
-            tx.create(iteration_node)
-            tx.create(iter_relationship)
-            self.db.commit(tx)
+            self.create_db_elements([
+                iteration_node,
+                iter_relationship
+            ])
 
             # single game
             if invert:
@@ -71,13 +72,12 @@ class TrainingSession:
 
             # training and stuff
             if method_exists(self.player1, "learn"):
-                pass
                 self.player1.learn("w", q)
-                
 
             if method_exists(self.player2, "learn"):
                 self.player2.learn("b", q)
 
+            # save model every n-th game
             if i % 1000 == 0:
                 if method_exists(self.player1, "save_model"):
                     self.player1.save_model()
@@ -85,14 +85,18 @@ class TrainingSession:
                 if self.save_twice and method_exists(self.player2, "save_model"):
                     self.player2.save_model()
 
+            # validate against real engine
+            if i % 1000 == 0:
+                self.validation()
 
-    @api.utils.decorators.timer
+
+    @d.timer_log
     def single_game(self, iter_node, player_white, player_black):
         # start a game
         game = chess.Board()
         pgn = chess.pgn.Game()
-        pgn.headers["White"] = player_white.__name__
-        pgn.headers["Black"] = player_black.__name__
+        pgn.headers["White"] = player_white.__class__.__name__
+        pgn.headers["Black"] = player_black.__class__.__name__
         pgn.setup(game)
         node = None
         whites_turn = True
@@ -126,7 +130,7 @@ class TrainingSession:
             else:
                 node = node.add_variation(move)
 
-        wc = player_white.__name__ if game.result() == "1-0" else (player_black.__name__ if game.result() == "0-1" else "none")
+        wc = player_white.__class__.__name__ if game.result() == "1-0" else (player_black.__class__.__name__ if game.result() == "0-1" else "none")
 
         pgn.headers["Result"] = game.result()
         game_node = Node(
@@ -141,7 +145,16 @@ class TrainingSession:
             game_pgn=str(pgn),
         )
         played_relationship = Relationship(iter_node, "Played", game_node)
-        tx = self.db.begin()
-        tx.create(game_node)
-        tx.create(played_relationship)
-        self.db.commit(tx)
+        self.create_db_elements([
+            game_node,
+            played_relationship
+        ])
+
+    def create_db_elements(self, ar):
+        try:
+            tx = self.db.begin()
+            for el in ar:
+                tx.create(el)
+            self.db.commit(tx)
+        except Exception as ex:
+            module_logger().exception(ex)

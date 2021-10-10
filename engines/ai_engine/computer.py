@@ -1,25 +1,26 @@
-from api.utils.decorators import timer
-from pprint import pprint
-import torch.nn as nn
-import torch
-import torch.nn.functional as F
 from api.engines.template_computer import Computer
-from torch.utils.data import Dataset, DataLoader
-import chess, chess.pgn, time
-import pandas as pd
-import os
 from api.utils.castling_move_number.castle import castle_move
 from api.utils.en_passant_generator.generate import en_passant
-
-import io
+from api.utils.logger import MyLogger
+from pprint import pprint
 from py2neo import Graph, NodeMatcher, RelationshipMatcher
+from torch.utils.data import Dataset, DataLoader
+import api.utils.decorators as d
+import chess, chess.pgn, time
+import io
+import os
+import pandas as pd
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
+# use this you dumb fuck
+module_logger = MyLogger(__name__)
 
 class AiComputer(Computer):
 
     # global cuda_devie
     cuda_device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    __name__ = "AiComputer"
 
     def __init__(self, *, load_model=False, model_name="model.pt"):
         self.model = AiComputer.Net()
@@ -41,6 +42,7 @@ class AiComputer(Computer):
         self.legal_move_reward = 0.7
         self.decay = 0.99999
         self.min_legal_move_reward = 0.3
+        # module_logger().info("Initialised the AiEngine") # example of logging
 
     def save_model(self, name=None):
         if self.model is not None:
@@ -78,10 +80,9 @@ class AiComputer(Computer):
         cp["legal"] = cp["move"]
         cp["legal"] = cp["legal"].isin(uci)
         cp = cp.sort_values(by=[f"legal", f"prediction"], ascending=[False, False])
-        # cp = cp.sort_values(by=f"prediction", ascending=False)
         return cp.iloc[0]["move"]
 
-    def predict_full(self, inp, reward):
+    def predict_full(self, inp):
 
         # multiple moves out of transform
         fens = inp[0]["fen"]
@@ -90,48 +91,47 @@ class AiComputer(Computer):
         desc = inp[1][1]
         ret = self.model(tens, desc)
         batch_size = list(ret.size())[0]
+        module_logger()
         
         target = torch.zeros(ret.shape, device=ret.device)
         for b in range(batch_size):
             fen = fens[b]
-            legales = list(chess.Board(fen).legal_moves)
+            board = chess.Board(fen)
+            legales = list(board.legal_moves)
             uci_legales = [m.uci() for m in legales]
             for index, row in self.moves.iterrows():
                 move = row["move"]
                 if move in uci_legales:
                     target[b, index] = self.min_legal_move_reward
-                    if move == played_move[b]:
-                        target[b, index] = reward
 
+                    # fix reward system you fucking twat
+                    if move == played_move[b]:
+                        # push move and check resulting position
+                        m = chess.Move.from_uci(move)
+                        board.push(m)
+                        if board.is_checkmate():
+                            target[b, index] = 1000
+                        else:
+                            board.pop()
+                            if board.is_capture(m):
+                                target[b, index] = Computer.piece_score_text[board.piece_at(m.to_square).symbol().lower()]
         return ret, target
 
-    @timer
+    @d.timer_log
     def learn(self, side, query):
-
-        # if won highest reward 
-        # if lost standard reward for making legal move
-        game = query[0].nodes[-1]
-        if (game["winner"] == "1-0" and side == "w") or (game["winner"] == "0-1" and side == "b"):
-            reward = 2
-        else:
-            reward = self.min_legal_move_reward
 
         d = AiComputer.create_dataset(query, side)
         loader = DataLoader(d, batch_size=10, shuffle=True)
-        print(f"len of dataset: {len(d)}")
         
         mean_loss = torch.zeros(1, device=AiComputer.cuda_device)  
-
         for a, b in enumerate(loader):
-            net_ret, target = self.predict_full(b, reward)
+            net_ret, target = self.predict_full(b)
             self.optimizer.zero_grad()
             loss = self.loss_criterion(net_ret, target)
             mean_loss += loss
-            # print(f"Loss equal to: {loss.item()}")
             loss.backward()
             self.optimizer.step()
 
-        print(mean_loss / len(d))
         if self.legal_move_reward > self.min_legal_move_reward:
             self.legal_move_reward = self.legal_move_reward * self.decay
 
@@ -204,17 +204,11 @@ class AiComputer(Computer):
                 temp = dict(game.nodes[-1])
                 assert temp["game_pgn"] is not None
 
-                temp_fens, temp_moves = self.tf1(temp["game_pgn"])
-                if len(temp_moves) != len(temp_fens):
-                    if len(temp_fens) > len(temp_moves):
-                        temp_fens.pop()
-                    else:
-                        temp_moves.pop()
-                assert len(temp_fens) == len(temp_moves)
+                d = self.tf1(temp["game_pgn"])
 
-                for j in range(len(temp_fens)):
-                    fenn = temp_fens[j]
-                    move = temp_moves[j]
+                for j in range(d["counter"]):
+                    fenn = d["positions"][j]
+                    move = d["played_move"][j]
                     if fenn not in self.games_positions:
                         item = dict()
                         item["fen"] = fenn
@@ -247,26 +241,24 @@ class AiComputer(Computer):
             act_pgn = io.StringIO(pgn_string)
             game = chess.pgn.read_game(act_pgn)
 
-            positions_to_play = list()
-            move_list = list()
+            output = dict()
+            output["positions"] = list()
+            output["played_move"] = list()
             board = game.board()
-            next = False
-            if self.side:
-                positions_to_play.append(board.fen())
-                next = True
+            counter = 0
 
             for move in game.mainline_moves():
-                if next:
-                    move_list.append(move.uci())
-                    next = False
+                if self.side == board.turn:
+                    counter += 1
+                    output["positions"].append(board.fen())
+                    output["played_move"].append(move.uci())
+                # else: # LSTM MAYBE CONTEXT OF THE POSITION
+                #     output["positions"].append(board.fen())
+                #     output["played_move"].append("")
                 board.push(move)
-                t = self.side == board.turn
-                if t:
-                    positions_to_play.append(board.fen())
-                    next = True
-                
 
-            return positions_to_play, move_list
+            output["counter"] = counter
+            return output
 
     class TransformToTensor(object):
         """
