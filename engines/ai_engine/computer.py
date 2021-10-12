@@ -116,7 +116,9 @@ class AiComputer(Computer):
                             target[b, index] = 1000
                         else:
                             board.pop()
-                            if board.is_capture(m):
+                            if board.is_en_passant(m):
+                                target[b, index] = Computer.piece_score_text["p"]
+                            elif board.is_capture(m):
                                 target[b, index] = Computer.piece_score_text[board.piece_at(m.to_square).symbol().lower()]
         return ret, target
 
