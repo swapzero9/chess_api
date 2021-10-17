@@ -4,3 +4,4 @@ fastapi
 pandas
 stockfish
 torchinfo
+uvicorn

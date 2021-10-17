@@ -1,28 +1,32 @@
 from api.engines.random_engine.computer import Computer
 import chess, math, time
 from api.engines.template_computer import Computer
-
+import api.utils.decorators as d
+from pprint import pprint
 
 class MiniMaxComputer(Computer):
     """
     simple minimax engine, with alpha-beta pruning and transposition table
     """
 
-    def __init__(self, side, depth=None):
+    def __init__(self, side="b", depth=None):
         if depth == None:
-            self.depth = 5
+            self.depth = 4
         else:
             self.depth = depth
 
         self.transposition_table = {}
         super().__init__(side)
 
+    @d.timer_log
     def think(self, fen: str) -> chess.Move:
+        print(self.depth)
         self.transposition_table = {}
         board = chess.Board(fen)
         move, eval = self.minimax(
             board, self.depth, -math.inf, math.inf, self.white_player
         )
+        # pprint(self.transposition_table)
         return move
 
     def evaluate_position(self, board):
@@ -34,7 +38,10 @@ class MiniMaxComputer(Computer):
             ) * self.piece_score[key]
 
         score *= board.turn if 1 else -1
-        self.transposition_table[board.fen()] = score
+        # r1bqk1nr/ppp2ppp/2p5/2b1p3/4P3/2N2N2/PPPP1PPP/R1BQK2R b KQkq - 1 5
+        t = board.fen().split(" ")
+        t.pop()
+        self.transposition_table[" ".join(t)] = score
         return score
 
     def minimax(self, board, depth, alpha, beta, white_player):
@@ -68,11 +75,13 @@ class MiniMaxComputer(Computer):
                 # try out every move
                 board.push(move)
                 temp = board.copy()
+                t = temp.fen().split(" ")
+                t.pop()
                 board.pop()
 
                 # look up if already evaluated, if not recurrency
-                if temp.fen() in self.transposition_table:
-                    eval = self.transposition_table[temp.fen()]
+                if " ".join(t) in self.transposition_table:
+                    eval = self.transposition_table[" ".join(t)]
                 else:
                     ret_move, eval = self.minimax(temp, depth - 1, alpha, beta, False)
 
@@ -95,11 +104,13 @@ class MiniMaxComputer(Computer):
                 # try out every move
                 board.push(move)
                 temp = board.copy()
+                t = temp.fen().split(" ")
+                t.pop()
                 board.pop()
 
                 # look up if already evaluated, if not recurrency
-                if temp.fen() in self.transposition_table:
-                    eval = self.transposition_table[temp.fen()]
+                if " ".join(t) in self.transposition_table:
+                    eval = self.transposition_table[" ".join(t)]
                 else:
                     ret_move, eval = self.minimax(temp, depth - 1, alpha, beta, True)
 

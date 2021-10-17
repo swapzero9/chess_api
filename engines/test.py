@@ -2,7 +2,7 @@ from api.engines.ai_engine.computer import AiComputer
 from api.engines.training import TrainingSession
 import api.utils.decorators as d
 from api.engines.ai_engine.models.architecture1.net import Net as n1
-from api.engines.ai_engine.models.architecture2.net import Net as n2
+from api.engines.ai_engine.models.architecture3.net import Net as n2
 from multiprocessing import Process
 
 @d.timer_log
@@ -14,7 +14,6 @@ def main():
     # t = TrainingSession("Ai_1", player)
     # t.train()
     ar = [
-        ("Ai1", "model1.pt", n1),
         ("Ai2", "model2.pt", n2),
     ]
     for el in ar: 

@@ -13,7 +13,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchsummary import summary
+from torchinfo import summary
 
 # use this you dumb fuck
 module_logger = MyLogger(__name__)
@@ -107,7 +107,6 @@ class AiComputer(Computer):
                 if move in uci_legales:
                     target[b, index] = self.min_legal_move_reward
 
-                    # fix reward system you fucking twat
                     if move == played_move[b]:
                         # push move and check resulting position
                         m = chess.Move.from_uci(move)
@@ -126,7 +125,7 @@ class AiComputer(Computer):
     def learn(self, side, query):
 
         d = AiComputer.create_dataset(query, side)
-        loader = DataLoader(d, batch_size=10, shuffle=True)
+        loader = DataLoader(d, batch_size=100, shuffle=True)
         
         mean_loss = torch.zeros(1, device=AiComputer.cuda_device)  
         for a, b in enumerate(loader):

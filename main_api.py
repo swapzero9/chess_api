@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
+import os 
 from api.chessboards import puzzles_chess
 from api.chessboards import duel_chess
 
@@ -10,6 +10,15 @@ origins = [
     "http://localhost:8080",
     "http://192.168.0.129:8080",
 ]
+
+@app.on_event("startup")
+def setup_environment():
+    if "DB_URL" not in os.environ:
+        os.environ["DB_URL"] = "http://localhost:7687"
+    if "DB_ADMIN" not in os.environ:
+        os.environ["DB_ADMIN"] = "neo4j"
+    if "DB_PASS" not in os.environ:
+        os.environ["DB_PASS"] = "s3cr3t"
 
 app.add_middleware(
     CORSMiddleware,

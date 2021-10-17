@@ -3,23 +3,32 @@ from api.classes.duel_chess_classes import InputFen
 from api.classes.duel_chess_classes import OutputFen
 from api.engines.random_engine.computer import RandomComputer
 from api.engines.minimax_engine.computer import MiniMaxComputer
+from api.engines.ai_engine.computer import AiComputer
+from api.engines.ai_engine.models.architecture3.net import Net
+from api.engines.stockfish_engine.computer import StockfishComputer
+import api.utils.decorators as d
 
 import chess
 
 router = APIRouter()
+engs = {}
 
+# on app start init engines
+@router.on_event("startup")
+async def startup():
+    print("init engines")
+    engs["minimax"] = MiniMaxComputer()
+    engs["random"] = RandomComputer()
+    engs["stockfish"] = StockfishComputer("b", 200)
+    engs["ai"] = AiComputer(net=Net)
+    print("inited")
 
+@d.timer_log
 @router.post("/position")
 async def position(details: InputFen):
 
-    eng = None
-    if details.targetComputer == "minimax_engine":
-        eng = MiniMaxComputer("b", 7)
-        print("chosen minimax")
-    else:
-        eng = RandomComputer("b")
-        print("chosen random")
-
+    eng = engs[details.targetComputer]
+    print(eng.__class__.__name__)
     # create board and make a move
     board = chess.Board(details.fen)
     move = eng.think(details.fen)
