@@ -3,6 +3,11 @@ import chess, math, time
 from api.engines.template_computer import Computer
 import api.utils.decorators as d
 from pprint import pprint
+from api.utils.logger import MyLogger
+import cProfile
+from collections import Counter
+
+logger = MyLogger(__name__)
 
 class MiniMaxComputer(Computer):
     """
@@ -11,7 +16,7 @@ class MiniMaxComputer(Computer):
 
     def __init__(self, side="b", depth=None):
         if depth == None:
-            self.depth = 4
+            self.depth = 5
         else:
             self.depth = depth
 
@@ -20,7 +25,6 @@ class MiniMaxComputer(Computer):
 
     @d.timer_log
     def think(self, fen: str) -> chess.Move:
-        print(self.depth)
         self.transposition_table = {}
         board = chess.Board(fen)
         move, eval = self.minimax(
@@ -30,15 +34,13 @@ class MiniMaxComputer(Computer):
         return move
 
     def evaluate_position(self, board):
-        temp = chess.BaseBoard(board_fen=board.board_fen())
         score = 0
         for key in self.piece_score:
             score += (
-                len(temp.pieces(key, True)) - len(temp.pieces(key, False))
+                len(board.pieces(key, True)) - len(board.pieces(key, False))
             ) * self.piece_score[key]
 
         score *= board.turn if 1 else -1
-        # r1bqk1nr/ppp2ppp/2p5/2b1p3/4P3/2N2N2/PPPP1PPP/R1BQK2R b KQkq - 1 5
         t = board.fen().split(" ")
         t.pop()
         self.transposition_table[" ".join(t)] = score
@@ -74,19 +76,18 @@ class MiniMaxComputer(Computer):
 
                 # try out every move
                 board.push(move)
-                temp = board.copy()
-                t = temp.fen().split(" ")
+                t = board.fen().split(" ")
                 t.pop()
-                board.pop()
 
                 # look up if already evaluated, if not recurrency
                 if " ".join(t) in self.transposition_table:
                     eval = self.transposition_table[" ".join(t)]
                 else:
-                    ret_move, eval = self.minimax(temp, depth - 1, alpha, beta, False)
+                    ret_move, eval = self.minimax(board, depth - 1, alpha, beta, False)
+                board.pop()
 
                 # alpha-beta pruning, and picking the best move
-                if eval > max_eval:
+                if eval >= max_eval:
                     max_eval = eval
                     best_move = move
                 alpha = max(alpha, eval)
@@ -103,22 +104,51 @@ class MiniMaxComputer(Computer):
 
                 # try out every move
                 board.push(move)
-                temp = board.copy()
-                t = temp.fen().split(" ")
+                t = board.fen().split(" ")
                 t.pop()
-                board.pop()
 
                 # look up if already evaluated, if not recurrency
                 if " ".join(t) in self.transposition_table:
                     eval = self.transposition_table[" ".join(t)]
                 else:
-                    ret_move, eval = self.minimax(temp, depth - 1, alpha, beta, True)
+                    ret_move, eval = self.minimax(board, depth - 1, alpha, beta, True)
+                board.pop()
 
                 # alpha-beta pruning, and picking the best move
-                if eval < min_eval:
+                if eval <= min_eval:
                     min_eval = eval
                     best_move = move
                 beta = min(beta, eval)
                 if beta < eval:
                     break
             return best_move, min_eval
+
+    @staticmethod
+    def piece_2_number(letter):
+        temp = {
+            "p": 1,
+            "r": 2,
+            "n": 3,
+            "b": 4,
+            "q": 5,
+            "k": 6,
+            "P": 7,
+            "R": 8,
+            "N": 9,
+            "B": 10,
+            "Q": 11,
+            "K": 12
+        }
+        return temp[letter]
+
+    def init_zobrist(self):
+        pass
+
+    def zorbist_hash(self, board):
+        pass
+
+if __name__ == "__main__":
+
+    pc = MiniMaxComputer()
+    fen = "r1bqk1nr/ppp2ppp/2p5/2b1p3/4P3/2N2N2/PPPP1PPP/R1BQK2R b KQkq - 1 5"
+    cProfile.run('pc.think("r1bqk1nr/ppp2ppp/2p5/2b1p3/4P3/2N2N2/PPPP1PPP/R1BQK2R b KQkq - 1 5")', sort="tottime")
