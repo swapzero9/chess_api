@@ -17,3 +17,14 @@ class OutputFen(BaseModel):
     moveFrom: str
     moveTo: str
     promotion: Optional[str] = None
+
+
+class ChessGame(BaseModel):
+    timestamp: Optional[int] = round(time.time() * 1000)
+    pgn: str
+    iteration: int
+    engine_name: str
+
+class ErrorDatabase(BaseModel):
+    timestamp: Optional[int] = round(time.time() * 1000)
+    error: str

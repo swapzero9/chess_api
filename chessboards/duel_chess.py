@@ -1,6 +1,5 @@
 from fastapi import APIRouter
-from api.classes.duel_chess_classes import InputFen
-from api.classes.duel_chess_classes import OutputFen
+from api.classes.chess_classes import InputFen, OutputFen
 from api.engines.random_engine.computer import RandomComputer
 from api.engines.minimax_engine.computer import MiniMaxComputer
 from api.engines.ai_engine.computer import AiComputer

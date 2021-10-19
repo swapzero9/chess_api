@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import os 
 from api.chessboards import puzzles_chess
 from api.chessboards import duel_chess
+from api.chessboards import training_chess
 
 app = FastAPI()
 
@@ -14,7 +15,7 @@ origins = [
 @app.on_event("startup")
 def setup_environment():
     if "DB_URL" not in os.environ:
-        os.environ["DB_URL"] = "http://localhost:7687"
+        os.environ["DB_URL"] = "bolt://localhost:7687"
     if "DB_ADMIN" not in os.environ:
         os.environ["DB_ADMIN"] = "neo4j"
     if "DB_PASS" not in os.environ:
@@ -32,6 +33,12 @@ app.include_router(
     puzzles_chess.router,
     prefix="/puzzles",
     tags=["puzzles"],
+)
+
+app.include_router(
+    training_chess.router,
+    prefix="/training",
+    tags=["training"],
 )
 
 app.include_router(
