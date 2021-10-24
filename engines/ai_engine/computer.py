@@ -39,7 +39,7 @@ class AiComputer(Computer):
             if self.model_name in m:
                 self.model.load_state_dict(torch.load(f"{self.model_path}/{self.model_name}"))
 
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.01)
         self.loss_criterion = nn.MSELoss()
 
         self.legal_move_reward = 0.7

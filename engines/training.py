@@ -4,9 +4,8 @@ from api.utils.logger import MyLogger
 from datetime import datetime
 from py2neo import Graph, Node, Relationship, NodeMatcher, RelationshipMatcher
 import api.utils.decorators as d
-import chess, chess.pgn, math, torch
+import chess, chess.pgn, math
 import itertools
-from torch.multiprocessing import Pool, Queue, Process
 
 module_logger = MyLogger(__name__, MyLogger.DEBUG)
 
@@ -109,7 +108,7 @@ class TrainingSession:
 
     @d.timer_log
     def single_game(self, iter_node, player_white, player_black):
-        print("gaming yo ")
+
         # start a game
         game = chess.Board()
         pgn = chess.pgn.Game()

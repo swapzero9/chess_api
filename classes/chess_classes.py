@@ -28,3 +28,17 @@ class ChessGame(BaseModel):
 class ErrorDatabase(BaseModel):
     timestamp: Optional[int] = round(time.time() * 1000)
     error: str
+
+class DuelChessGame(BaseModel):
+    timestamp: Optional[int] = round(time.time() * 1000)
+    pgn: str
+    opponent: str
+
+class EngineSparingInput(BaseModel):
+    timestamp: Optional[int] = round(time.time() * 1000)
+    player_white: str
+    player_black: str
+
+class EngineSparingGame(BaseModel):
+    timestamp: Optional[int] = round(time.time() * 1000)
+    pgn: str

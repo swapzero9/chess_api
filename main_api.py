@@ -4,6 +4,7 @@ import os
 from api.chessboards import puzzles_chess
 from api.chessboards import duel_chess
 from api.chessboards import training_chess
+from api.chessboards import enigne_chess
 
 app = FastAPI()
 
@@ -46,6 +47,13 @@ app.include_router(
     prefix="/duel",
     tags=["duel"],
 )
+
+app.include_router(
+    enigne_chess.router,
+    prefix="/engine",
+    tags=["engine"],
+)
+
 
 
 @app.get("/")
