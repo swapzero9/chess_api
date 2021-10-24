@@ -42,3 +42,11 @@ class EngineSparingInput(BaseModel):
 class EngineSparingGame(BaseModel):
     timestamp: Optional[int] = round(time.time() * 1000)
     pgn: str
+
+class TrainingNodeList(BaseModel):
+    timestamp: Optional[int] = round(time.time() * 1000)
+    node_list: list
+
+class SelectTrainingNode(BaseModel):
+    timestamp: Optional[int] = round(time.time() * 1000)
+    node_name: str

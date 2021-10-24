@@ -35,7 +35,7 @@ class TrainingSession:
         # if yes raise an exception
         matcher = NodeMatcher(self.db)
         res = matcher.match("TrainingNode", name=name).all()
-        # assert len(res) == 0 # node already exists
+        assert len(res) == 0 # node already exists
 
         self.validation = Validation(self.training_session_node, self.player1)
         self.create_db_elements([self.training_session_node])

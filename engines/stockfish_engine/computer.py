@@ -17,8 +17,6 @@ class StockfishComputer(Computer):
         self.model.set_elo_rating(elo)
         self.model.set_depth(5)
 
-        module_logger().info(self.model.get_parameters())
-
     def think(self, fen):
         board = chess.Board(fen)
         self.model.set_fen_position(fen)
