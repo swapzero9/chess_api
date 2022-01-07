@@ -40,7 +40,7 @@ class MiniMaxComputer(Computer):
                 len(board.pieces(key, True)) - len(board.pieces(key, False))
             ) * self.piece_score[key]
 
-        score *= board.turn if 1 else -1
+        score *= 1 if board.turn else -1
         t = board.fen().split(" ")
         t.pop()
         self.transposition_table[" ".join(t)] = score

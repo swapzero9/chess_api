@@ -6,12 +6,14 @@ class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
 
-        self.lstm = nn.LSTM(85, 250, 20)
+        self.lstm = nn.LSTM(85, 512, 50)
         self.drop = nn.Dropout(p=0.1)
 
-        self.fc1 = nn.Linear(250, 500)
-        self.fc2 = nn.Linear(500, 750)
-        self.fc3 = nn.Linear(750, 1968)
+        self.norm = nn.LayerNorm(512)
+
+        self.fc1 = nn.Linear(512, 256)
+        self.fc2 = nn.Linear(256, 128)
+        self.fc3 = nn.Linear(128, 1968)
 
     def forward(self, x1, x2):
         # x1 => chessboard
@@ -24,9 +26,11 @@ class Net(nn.Module):
         ), dim=1)
         
         x.unsqueeze_(1)
-
+        
         x, _ = self.lstm(x) # 3dim
         x = torch.flatten(x, 1)
+        
+        x = self.norm(x)
         
         # linear
         x = F.mish(self.fc1(x))

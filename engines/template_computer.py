@@ -1,17 +1,17 @@
 from os import stat
 import chess, random, math, time, chess.pgn
 import io
-from api.utils.decorators import timer
+# from api.utils.decorators import timer
 
 
 class Computer:
     piece_score = {
-        1: 10,  # Pawn
-        2: 29,  # Knight
-        3: 30,  # Bishop
-        4: 50,  # Rook
-        5: 90,  # Queen
-        6: 1000,  # King
+        1: 100,  # Pawn
+        2: 300,  # Knight
+        3: 300,  # Bishop
+        4: 500,  # Rook
+        5: 900,  # Queen
+        6: 100000,  # King
     }
 
     piece_score_text = {

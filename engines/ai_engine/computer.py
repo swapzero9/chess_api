@@ -1,6 +1,4 @@
 from api.engines.template_computer import Computer
-from api.utils.castling_move_number.castle import castle_move
-from api.utils.en_passant_generator.generate import en_passant
 from api.utils.logger import MyLogger
 from pprint import pprint
 from py2neo import Graph, NodeMatcher, RelationshipMatcher
@@ -74,7 +72,6 @@ class AiComputer(Computer):
 
         cp = self.moves.copy()
         cp["prediction"] = ret[0,:].tolist()
-
         legal = chess.Board(fen).legal_moves
         uci = list()
         for move in legal:
@@ -103,7 +100,9 @@ class AiComputer(Computer):
             legales = list(board.legal_moves)
             uci_legales = [m.uci() for m in legales]
             for index, row in self.moves.iterrows():
+
                 move = row["move"]
+                
                 if move in uci_legales:
                     target[b, index] = self.min_legal_move_reward
 
@@ -112,7 +111,7 @@ class AiComputer(Computer):
                         m = chess.Move.from_uci(move)
                         board.push(m)
                         if board.is_checkmate():
-                            target[b, index] = 1000
+                            target[b, index] = 100000
                         else:
                             board.pop()
                             if board.is_en_passant(m):
@@ -150,6 +149,43 @@ class AiComputer(Computer):
         )
 
         return dataset
+
+    @staticmethod
+    def castle_move(fen):
+        castles = fen.split(" ")[2]
+        ret = torch.zeros((1, 5))
+        if "K" in castles:
+            ret[0][0] = 1.0
+        if "Q" in castles:
+            ret[0][1] = 1.0
+        if "k" in castles:
+            ret[0][2] = 1.0
+        if "q" in castles:
+            ret[0][3] = 1.0
+        
+        # move number
+        move_number = fen.split(" ")[5]
+        ret[0][4] = int(move_number) / 500 # normalization for nn
+        return ret
+
+    @staticmethod
+    def en_passant(fen):
+        ret = torch.zeros((1, 16))
+        en = fen.split(" ")[3]
+        if en == "-":
+            return ret
+        lol = "abcdefgh"
+        i = 0
+        for letter in lol:
+            if f"{letter}3" == en:
+                ret[0][i] = 1.0
+                break
+            i += 1
+            if f"{letter}6" == en:
+                ret[0][i] = 1.0
+                break
+            i += 1
+        return ret
 
     def model_summary(self):
         model_stats = summary(self.model, [(1,8,8), (1,1,21)])
@@ -261,8 +297,8 @@ class AiComputer(Computer):
             temp = fen_raw.split(" ") 
             fen = temp.pop(0)
             temp.pop() # pop last element off of list (move number)
-            castle = castle_move(fen_raw)
-            en = en_passant(fen_raw)
+            castle = AiComputer.castle_move(fen_raw)
+            en = AiComputer.en_passant(fen_raw)
             desc = torch.cat((castle, en), dim=1)
             desc = desc.to(AiComputer.cuda_device)
             

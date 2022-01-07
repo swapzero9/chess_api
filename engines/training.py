@@ -35,7 +35,7 @@ class TrainingSession:
         # if yes raise an exception
         matcher = NodeMatcher(self.db)
         res = matcher.match("TrainingNode", name=name).all()
-        assert len(res) == 0 # node already exists
+        # assert len(res) == 0 # node already exists
 
         self.validation = Validation(self.training_session_node, self.player1)
         self.create_db_elements([self.training_session_node])
@@ -60,22 +60,6 @@ class TrainingSession:
                 iter_relationship
             ])
 
-            # processes = []
-            # # single game
-            # for j in range(self.games_in_iteration):
-                # if invert:
-                    # args = (iteration_node, self.player1, self.player2)
-                # else: 
-                    # args = (iteration_node, self.player2, self.player1)
-                # invert = invert == False
-                
-                # p = Process(target=self.single_game, args=args)
-                # p.start()
-                # processes.append(p)
-            # for j in processes:
-                # j.join()
-
-            # for j in range(self.games_in_iteration):
             invert = invert == False
             if invert:
                 self.single_game(iteration_node, self.player1, self.player2)

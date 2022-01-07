@@ -14,7 +14,7 @@ def main():
     # t = TrainingSession("Ai_1", player)
     # t.train()
     ar = [
-        ("Ai2", "model2.pt", n2),
+        # ("Test Training", "model", n2),
     ]
     for el in ar: 
         p = Process(target=single_session, args=el)
@@ -23,8 +23,9 @@ def main():
     pass
 
 def single_session(name, model_name, net):
-    player = AiComputer(model_name=model_name, net=net)
-    t = TrainingSession(name, player)
+    player1 = AiComputer(model_name=f"{model_name}1.pt", net=net)
+    player2 = AiComputer(model_name=f"{model_name}2.pt", net=net)
+    t = TrainingSession(name, player1, player2)
     t.train()
 
 if __name__ == "__main__":
