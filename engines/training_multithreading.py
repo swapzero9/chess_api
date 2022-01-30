@@ -14,11 +14,10 @@ class TrainingSession:
         self.eng = eng
         self.net = net
         self.amount_of_iterations = amount
-        self.games_in_iteration = 10
+        self.games_in_iteration = 5
 
     d.timer_log
     def train(self):
-
         rang = range(self.amount_of_iterations) if self.amount_of_iterations is not None else itertools.count()
         self.manager = mp.Manager()
         for i in rang:
@@ -29,8 +28,10 @@ class TrainingSession:
                 queue.append([self.eng, self.net, j*2+1, ""])
 
             with mp.Pool(processes=4) as pool:
-                pool.map(TrainingSession.single_game, queue)
-
+                results = pool.map_async(TrainingSession.single_game, queue)
+                a = results.get()
+                for game in a:
+                    print(game["pgn"])
 
     @staticmethod
     @d.timer
@@ -82,7 +83,10 @@ class TrainingSession:
 
         pgn.headers["Result"] = game.result()
         print(f"game {ind} finished")
-        print(pgn)
+        return {
+            "pgn": str(pgn),
+            "path": "eat shit"
+        }
 
 if __name__ == "__main__":
     t = TrainingSession("penis", AiComputer2, Net, 6)

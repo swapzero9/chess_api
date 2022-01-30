@@ -1,99 +1,208 @@
-# from api.engines.template_computer import Computer
 import torch
 import chess, chess.pgn
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torchinfo import summary
-import os
-from dataclasses import dataclass
-import random
+import os, math
+from dataclasses import dataclass, field
 from torch.utils.data import Dataset, DataLoader
-from typing import List
-from pprint import pprint
+from typing import List, Dict, Tuple
+from datetime import datetime
+from api.utils.all_moves_generator.generate import generate_moves_list
+from random import shuffle
+
 
 @dataclass
-class Node:
-    p: chess.Board = chess.Board() # position of eval node
-    prior: float = 0
-    v: float = 0 # winning score of current node
-    n: int = 0 # number of times parent node has been visited
-    c: int = 0 # number of times child node has been visited
-    parent = None
-    children = None
-    def eval (self):
-        return self.v + 2 * self.prior * np.sqrt(np.log(self.n + 1 + np.finfo(np.float32).eps) / (self.c + np.finfo(np.float32).eps))
+class GameTree:
+    hp: float = 0.5 # hyperparameter
+    Qsa: Dict[Tuple[str, chess.Move], float] = field(default_factory=dict)      # Q values for state, action
+    Nsa: Dict[Tuple[str, chess.Move], int] = field(default_factory=dict)        # Number of times state, action has been visited
+    Ns:  Dict[str, int] = field(default_factory=dict)                           # Number of times state was visited
+    Ps:  Dict[str, torch.Tensor] = field(default_factory=dict)                  # Initial policy for given state
+    Es:  Dict[str, float] = field(default_factory=dict)                         # Stored values of finished games for given state
+    Vs:  Dict[str, torch.Tensor] = field(default_factory=dict)                  # Stored legal moves for given state
+    def eval(self, sa:Tuple[str, chess.Move], m:int):
+        if sa in self.Qsa:
+            return self.Qsa[sa] + self.hp * self.Ps[sa[0]][m].item() * math.sqrt(self.Ns[sa[0]]) / (1 + self.Nsa[sa])
+        return self.hp * self.Ps[sa[0]][m].item() * math.sqrt(self.Ns[sa[0]] + 1)
 
 class AiComputer2:
-    """
-    Different from previous
-    Instead of outputing matrix of size (moves x 1968)
-    Outputs (moves x 1)
-    where number represents how good the position is
-    And maybe second net to traverse the position deeper
-    """
 
     CUDA_DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    MOVES:List[chess.Move] = generate_moves_list()
 
-    def __init__(self, *, load_model=False, model_name="model.pt", net:nn.Module, seed:int = random.randint(0, 100)):
-        self.model = net()
+    def __init__(self, *, load_model=False, model_name="model.pt", hist_folder="", net=None):
+        self.transform = AiComputer2.TransformToTensor()
+        self.model = net(self.transform)
         self.model.to(self.CUDA_DEVICE)
         # self.model_summary()
 
-        # self.model_path = "./api/engines/ai_engine_new/models"
-        self.model_path = "./models"
+        self.model_path = "./api/engines/ai_engine_new/models"
+        # self.model_path = "./models"
         self.model_name = model_name
-        self.seed = seed
-        random.seed(self.seed)
-        self.__thinker = AiComputer2.MonteCarloSearch()
+        self.game_path = f"./api/engines/ai_engine_new/{hist_folder}"
 
         if load_model:
             m = os.listdir(self.model_path)
             if self.model_name in m:
+                print("load_model")
                 self.model.load_state_dict(torch.load(f"{self.model_path}/{self.model_name}"))
 
-        self.transform = AiComputer2.TransformToTensor()
+        self.__mcts = AiComputer2.MonteCarloSearch(self.model)
 
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.01)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
         self.loss_criterion = nn.MSELoss()
 
     def save_model(self, name=None):
         if self.model is not None:
-            if name is not None:
+            if name is not None: 
                 torch.save(self.model.state_dict(), f"{self.model_path}/{name}")
             else:
                 torch.save(self.model.state_dict(), f"{self.model_path}/{self.model_name}")
 
     def model_summary(self):
-        model_stats = summary(self.model, [(1,8,8), (1,1,21)])
+        model_stats = summary(self.model, [(1,85)])
         if model_stats is not None:
             print(model_stats)
 
     def think(self, fen):
-        move = self.__thinker(self, fen, iterations=(50 + self.seed))
-        temp = chess.Board(fen)
-        m = chess.Move.from_uci(move)
-        if m in temp.legal_moves:
-            return m
-        else:
-            return list(temp.legal_moves)[0]
+        b = chess.Board(fen)
+        self.__mcts(b)
 
     def learn(self):
-        pass
+        for i in range(0, 10000):
+            print(f"#############################\nIteration: {i}")
+            iteration_set = list()
+
+            should_print = True
+            for _ in range(5):
+                temp = self.__execute_session(should_print)
+                iteration_set.extend(temp)
+                should_print = False
+            
+            shuffle(iteration_set)
+            self.__train(iteration_set)
+            self.save_model()
+            self.__mcts.reset_game_tree()
+
+    def __train(self, tset):
+        pi_losses = list()
+        v_losses = list()
+
+        epoch_num = 2
+        print(f"Entered training with {len(tset)} sets of data")
+
+        for e in range(epoch_num):
+            print(f"Epoch: {e}")
+            dt = AiComputer2.TrainingDataset(tset)
+            dl = DataLoader(dt, batch_size=1, shuffle=True)
+            for _, b in enumerate(dl):
+
+                brd, t_pi, t_v = b
+                out_pi, out_v = self.model(brd)
+
+                l_pi = self.loss_pi(t_pi, out_pi)
+                l_v = self.loss_v(t_v, out_v)
+                total = l_pi + l_v
+                
+                pi_losses.append(float(l_pi))
+                v_losses.append(float(l_v))
+
+                self.optimizer.zero_grad()
+                total.backward()
+                self.optimizer.step()
+
+            print("-----------------------------")
+            print(f"Policy Loss: {np.mean(pi_losses)}")
+            print(f"Value Loss:  {np.mean(v_losses)}")
+
+
+    def loss_pi(self, targets, outputs):
+        return self.loss_criterion(targets, outputs)
+
+    def loss_v(self, targets, outputs):
+        return self.loss_criterion(targets, outputs)
+
 
     def create_moveset(self, arg):
         return self.ChessMoveset(arg)
 
-    def predict_probabilities(self, nodelist:List[Node]):
-        d = self.create_moveset(nodelist)
-        dl = DataLoader(d, batch_size=len(d))
-        positions = next(iter(dl))
-        with torch.no_grad():
-            ret:torch.Tensor = self.model(positions)
-        for index, node in enumerate(nodelist):
-            node.prior = ret[index].item()
-        return nodelist
+    def __execute_session(self, p:bool):
+        train_set = list()
+        board = chess.Board()
+        pgn = chess.pgn.Game()
+        pgn.headers["White"] = "roofus"
+        pgn.headers["Black"] = "doofus"
+        pgn.setup(board)
+        node = None
+
+        # run single training session, save all the positions and results from net
+        result = None
+        while not board.is_game_over() and board.fullmove_number < 75:
+            
+            probabilities, _ = self.__mcts.get_probabilities(board)
+            train_set.append([board.fen(), probabilities, None])
+            move_indx = np.random.choice(len(AiComputer2.MOVES), p=probabilities)
+            move = AiComputer2.MOVES[move_indx]
+            if move not in board.legal_moves:
+                print(board.fen())
+                print(move)
+                assert move in board.legal_moves
+
+            board.push(move)
+            if node is None:
+                node = pgn.add_variation(move)
+            else:
+                node = node.add_variation(move)
+        
+        if not board.is_game_over():
+            pgn.headers["Result"] = "1/2-1/2"
+        else:
+            pgn.headers["Result"] = board.result()
+        try:
+            print(f"Game finished! \nResult: {board.result()}\nGame Val: {self.__mcts.gt.Es[AiComputer2.get_base_board(board)]}")
+        except Exception as ex:
+            print(ex)
+
+        # save pgn to file
+        with open(f"{self.game_path}/{datetime.now().strftime('%d%m%Y_%H%M%S')}.pgn", mode="w") as f:
+            f.write(str(pgn))
+
+        if p:
+            print(f"#############################\nGame from iteration")
+            print(f"#############################")
+            print(str(pgn))
+
+        result = AiComputer2.get_normalised_outcome(board)
+        train_set = [[x[0], x[1], result] for x in train_set]
+        return train_set
+
+    class TrainingDataset(Dataset):
+
+        def __init__(self, tset):
+            self.tsfm = AiComputer2.TransformToTensor()
+            self.db:List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = list()
+
+            for el in tset:
+                pi = torch.FloatTensor(np.asarray(el[1]))
+                pi = pi.to(AiComputer2.CUDA_DEVICE)
+
+                v = torch.FloatTensor(np.asarray([el[2]]))
+                v = v.to(AiComputer2.CUDA_DEVICE)
+
+                temp = (
+                    self.tsfm(el[0]),
+                    pi, v
+                )
+                self.db.append(temp)
+            pass
+
+        def __getitem__(self, index):
+            return self.db[index]
+
+        def __len__(self):
+            return len(self.db)
 
 
     class TransformToTensor(object):
@@ -104,33 +213,35 @@ class AiComputer2:
         def __init__(self):
             pass
         
-        def __call__(self, inp):
-            assert isinstance(inp, list) or isinstance(inp, str)
+        def __call__(self, inp, arg=False):
+            assert isinstance(inp, list) or isinstance(inp, str) or isinstance(inp, tuple)
 
-            if isinstance(inp, list):
+            if isinstance(inp, list) or isinstance(inp, tuple):
                 t = list()
                 for i in range(len(inp)):
-                    t.append(AiComputer2.TransformToTensor.handle_single_fen(inp[i]))
+                    t.append(AiComputer2.TransformToTensor.handle_single_fen(inp[i]), arg)
                 return t
             else:
-                t = AiComputer2.TransformToTensor.handle_single_fen(inp)
+                t = AiComputer2.TransformToTensor.handle_single_fen(inp, arg)
                 return t
         
         @staticmethod
-        def handle_single_fen(fen_raw: str):
+        def handle_single_fen(fen_raw: str, arg=False):
 
             temp = fen_raw.split(" ") 
             fen = temp.pop(0)
-            temp.pop() # pop last element off of list (move number)
+            turn = temp.pop(0)
             castle = AiComputer2.castle_move(fen_raw)
             en = AiComputer2.en_passant(fen_raw)
             desc = torch.cat((castle, en), dim=1)
             desc = desc.to(AiComputer2.CUDA_DEVICE)
             
             ranks = fen.split("/")
+            if turn == "b":
+                ranks.reverse()
             i = 0 
             rank_tensor = torch.zeros(
-                8, 8, dtype=torch.float32, 
+                64, dtype=torch.float16, 
                 device=AiComputer2.CUDA_DEVICE
             )
             for rank in ranks:
@@ -140,136 +251,97 @@ class AiComputer2:
                         j += int(letter)
                     else:
                         piece = AiComputer2.piece_2_number(letter)
-                        rank_tensor[i, j] = piece
+                        rank_tensor[i*8+j] = piece
                         j += 1
                 i += 1
             rank_tensor.unsqueeze_(0)
-            return rank_tensor, desc, fen_raw
+            ret = torch.cat([rank_tensor, desc], dim=1)
+            if arg:
+                ret.unsqueeze_(0)
+            return ret
 
     class MonteCarloSearch:
 
-        def __init__(self) -> None:
-            pass
+        def __init__(self, model) -> None:
+            self.model:AiComputer2.Net = model
+            self.gt = GameTree()
+            self.mcts_am = 40
 
-        def __call__(self, model, start, iterations = 2000):
-            self.model:AiComputer2 = model
-            curr_node:Node = start if isinstance(start, Node) else Node(chess.Board(start))
-            curr_node.children = list()
-            for move in curr_node.p.legal_moves:
-                child = Node(chess.Board(curr_node.p.fen()))
-                child.p.push(move)
-                child.parent = curr_node
-                curr_node.children.append(child)
-            curr_node.children = self.model.predict_probabilities(curr_node.children)
+        def __call__(self, board:chess.Board):
 
-            selected = None
-            while iterations > 0:
-                if curr_node.p.turn: # white player, looking for max
-                    curr_node.children.sort(key=lambda x: x.eval(), reverse=True) 
-                    selected = curr_node.children[0]
+            state = AiComputer2.get_base_board(board)
+            if board.is_game_over():
+                t = AiComputer2.get_normalised_outcome(board)
+                self.gt.Es[state] = t
+                return (-1) * t
+            if board.fullmove_number > 75:
+                # draw, took too long
+                self.gt.Es[state] = 1e-4
+                return (-1.0) * 1e-4
 
-                    self.expand(selected)
-                    max_val = self.predict_prior(self.expanded_node)
-                    curr_node = self.backpropagation(self.expanded_node, max_val)
+            if state not in self.gt.Ps:
+                self.gt.Ps[state], value = self.model.predict(board.fen())
+                self.gt.Ps[state].squeeze_(0)
+                valid_moves = torch.FloatTensor(AiComputer2.get_masked_valid_moves(board))
+                valid_moves = valid_moves.to(AiComputer2.CUDA_DEVICE)
+                self.gt.Ps[state] *= valid_moves
+                csum = torch.sum(self.gt.Ps[state])
 
-                else: #black player looking for min
-                    curr_node.children.sort(key=lambda x: x.eval(), reverse=False) 
-                    selected = curr_node.children[0]
+                if csum > 0:
+                    self.gt.Ps[state] /= csum
+                else:
+                    self.gt.Ps[state] += valid_moves
+                    self.gt.Ps[state] /= torch.sum(self.gt.Ps[state])
 
-                    self.expand(selected)
-                    max_val = self.predict_prior(self.expanded_node)
-                    curr_node = self.backpropagation(self.expanded_node, max_val)
-                iterations -= 1
+                self.gt.Vs[state] = valid_moves
+                self.gt.Ns[state] = 0
+                return (-1.0) * value.item()
 
-            best = None
-            if curr_node.p.turn:
-                curr_node.children.sort(key=lambda x: x.eval(), reverse=True) 
-                best = curr_node.children[0].p.fen()
-                
-            else:
-                curr_node.children.sort(key=lambda x: x.eval(), reverse=False) 
-                best = curr_node.children[0].p.fen()
-
-            for move in curr_node.p.legal_moves:
-                curr_node.p.push(move)
-                if curr_node.p.fen() == best:
-                    return move.uci()
-                curr_node.p.pop()
-
-        def expand(self, curr_node):
-            if curr_node.children is None:
-                curr_node.children = list()
-
-            if len(curr_node.children) == 0:
-                self.expanded_node = curr_node
-            else:
-                if curr_node.p.turn:
-                    curr_node.children.sort(key=lambda x: x.eval()) 
-                    selected = curr_node.children[0]
-                else: #black player looking for min
-                    curr_node.children.sort(key=lambda x: x.eval(), reverse=True) 
-                    selected = curr_node.children[0]
-                self.expand(selected)
-
-        def predict_prior(self, node:Node):
-            # curr_node.children = self.model.predict_probabilities(curr_node.children)
-            if node.p.is_game_over():
-                print("dupa")
-                return 100 if node.parent.p.turn else (-100 if not node.parent.p.turn else 0)
+            # highest ucb
+            best = -math.inf
+            move = None
+            for action in board.legal_moves:
+                ucb_val = self.gt.eval((state, action), AiComputer2.get_move_index(action))
+                if ucb_val > best:
+                    best = ucb_val
+                    move = action
             
-            if node.children is None:
-                node.children = list()
+            board.push(move)
+            value = self.__call__(board)
+            board.pop()
 
-            if len(node.children) == 0:
-                for move in node.p.legal_moves:
-                    child = Node(chess.Board(node.p.fen()))
-                    child.p.push(move)
-                    child.parent = node
-                    node.children.append(child)
-            node.children = self.model.predict_probabilities(node.children)
-            node.children.sort(key=lambda x: x.eval(), reverse=True)
-            return node.children[0].eval()
-
-        def rollout(self, curr_node):
-            if curr_node is None:
-                return
-            if curr_node.p.is_game_over():
-                o = curr_node.p.outcome().winner
-                self.leaf_node = curr_node
-                if o:
-                    self.reward = 1
-                elif not o:
-                    self.reward = -1
-                else: 
-                    self.reward = 0
-                return
+            if (state, move) in self.gt.Qsa:
+                self.gt.Qsa[(state, move)] = (self.gt.Nsa[(state, move)] * self.gt.Qsa[(state, move)] + value) / (1 + self.gt.Nsa[(state, move)])
             else:
-                if curr_node.children is None:
-                    curr_node.children = list()
+                self.gt.Qsa[(state, move)] = value
+                self.gt.Nsa[(state, move)] = 1
+            self.gt.Ns[state] += 1
+            return (-1.0) * value
 
-                for move in curr_node.p.legal_moves:
-                    child = Node(chess.Board(curr_node.p.fen()))
-                    child.p.push(move)
-                    child.parent = curr_node
-                    curr_node.children.append(child)
 
-                r = random.choice(curr_node.children)
-                self.rollout(r)
+        def get_probabilities(self, board:chess.Board, temp=1):
 
-        def backpropagation(self, curr_node, reward):
-            curr_node.c += 1
-            curr_node.v += reward
-            while curr_node.parent is not None:
-                curr_node.n += 1
-                curr_node = curr_node.parent
-            return curr_node
+            for _ in range(self.mcts_am):
+                _ = self.__call__(board.copy())
+
+            state = AiComputer2.get_base_board(board)
+            legal_moves = list(board.legal_moves)
+            counts = [self.gt.Nsa[(state, action)] if (state, action) in self.gt.Nsa else 0 for action in AiComputer2.MOVES]
+
+            csum = float(sum(counts))
+            if csum > 0:
+                probs = [x / csum for x in counts]
+            else:
+                probs = [0 for _ in counts]
+                probs[np.random.choice(len(probs))] = 1
+            return probs, legal_moves
+
+        def reset_game_tree(self):
+            self.gt = GameTree()
 
     class ChessMoveset(Dataset):
-        def __init__(self, nodelist: List[Node]) -> None:
-            self.tsfm = AiComputer2.TransformToTensor()
+        def __init__(self, nodelist):
             self.dataset = list()
-            for node in nodelist:
-                self.dataset.append(self.tsfm(node.p.fen()))
 
         def __len__(self):
             return len(self.dataset)
@@ -382,22 +454,45 @@ class AiComputer2:
             i += 1
         return ret
 
+    @staticmethod
+    def get_base_board(b: chess.Board):
+        f = b.fen().split(" ")
+        f.pop()
+        f.pop()
+        f = "_".join(f)
+        return f
+
+    @staticmethod
+    def get_normalised_outcome(board:chess.Board):
+        if board.is_game_over():
+            temp = board.outcome()
+            if temp.winner is None:
+                return 1e-4
+            elif temp.winner == True:
+                return 1.0
+            elif temp.winner == False:
+                return -1.0
+        else:
+            return 0
+    
+    @staticmethod
+    def get_masked_valid_moves(board:chess.Board):
+        masked = [0 for _ in range(len(AiComputer2.MOVES))]
+        for move in board.legal_moves:
+            i = AiComputer2.MOVES.index(move)
+            masked[i] = 1
+        return masked
+
+    @staticmethod
+    def get_move_index(move:chess.Move):
+        return AiComputer2.MOVES.index(move)
+
 if __name__ == "__main__":
 
-    # fen = "r1bqkb1r/pp1ppppp/2n2n2/2p5/5P2/4PN2/PPPPB1PP/RNBQK2R b KQkq - 4 4"
+    from api.engines.ai_engine_new.models.architecture1.net import Net as net1
+    from api.engines.ai_engine_new.models.architecture2.net import Net as net2
 
-    # board, description = eng.transform(fen)
-    # pprint(board.shape)
-    # pprint(description.shape)
-    # # eng.model(ten, desc)
-
-    print("here")
-    ########################
-    # monte carlo testing
+    a = AiComputer2.get_base_board(chess.Board("rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3"))
+    # eng1 = AiComputer2(load_model=False, model_name="model1.pt", net=net1, hist_folder="games_history_a1")
+    # eng2 = AiComputer2(load_model=False, model_name="model2.pt", net=net2, hist_folder="games_history_a2")
     
-    from api.engines.ai_engine_new.models.architecture1.net import Net
-
-    eng = AiComputer2(net=Net)
-
-    board = chess.Board("5rk1/pp4p1/n5N1/5q1Q/2pP1P2/6P1/1P3P1P/6K1 w - - 9 36")
-    eng.think(board.fen())

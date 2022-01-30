@@ -1,17 +1,20 @@
 from api.engines.template_computer import Computer
 from api.utils.logger import MyLogger
 from pprint import pprint
-from py2neo import Graph, NodeMatcher, RelationshipMatcher
 from torch.utils.data import Dataset, DataLoader
 import api.utils.decorators as d
 import chess, chess.pgn, time
-import io
+import io, random
 import os
 import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchinfo import summary
+from typing import List, Tuple, Dict
+from api.engines.ai_engine.models.architecture3.net import Net
+import numpy as np
+from datetime import datetime
 
 # use this you dumb fuck
 module_logger = MyLogger(__name__)
@@ -22,15 +25,17 @@ class AiComputer(Computer):
     cuda_device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     def __init__(self, *, load_model=False, model_name="model.pt", net:nn.Module):
+        MOVES:List[chess.Move] = AiComputer.generate_moves_list()
         self.model = net()
         self.model.to(self.cuda_device)
-        self.model_summary()
+        # self.model_summary()
 
         self.tsfm = AiComputer.TransformToTensor()
         self.moves = pd.read_csv("./api/utils/all_moves_generator/all_moves.csv")
         self.dataset = None
         self.model_path = "./api/engines/ai_engine/models"
         self.model_name = model_name
+        self.games_path = "./api/engines/ai_engine/games"
 
         if load_model:
             m = os.listdir(self.model_path)
@@ -40,9 +45,7 @@ class AiComputer(Computer):
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.01)
         self.loss_criterion = nn.MSELoss()
 
-        self.legal_move_reward = 0.7
-        self.decay = 0.99999
-        self.min_legal_move_reward = 0.3
+        self.legal_move_reward = 1
         # module_logger().info("Initialised the AiEngine") # example of logging
 
     def save_model(self, name=None):
@@ -64,7 +67,6 @@ class AiComputer(Computer):
         return list(legal)[0]
 
     def predict_single(self, fen):
-
         with torch.no_grad():
             ten, garb = self.tsfm(fen)
             ten.unsqueeze_(0)
@@ -82,31 +84,50 @@ class AiComputer(Computer):
         cp = cp.sort_values(by=[f"legal", f"prediction"], ascending=[False, False])
         return cp.iloc[0]["move"]
 
-    def predict_full(self, inp):
+    def __predict_single(self, fen):
+        ten, garb = self.tsfm(fen)
+        ten.unsqueeze_(0)
+        ret = self.model(ten, garb)
+
+        cp = self.moves.copy()
+        cp["prediction"] = ret[0,:].tolist()
+        legal = chess.Board(fen).legal_moves
+        uci = list()
+        for move in legal:
+            uci.append(move.uci())
+
+        cp["legal"] = cp["move"]
+        cp["legal"] = cp["legal"].isin(uci)
+        cp = cp.sort_values(by=[f"legal", f"prediction"], ascending=[False, False])
+        t = random.randint(0, 5)
+        if cp.iloc[1]["legal"] and t > 3:
+            return cp.iloc[1]["move"], ((ten, garb), ret)
+        return cp.iloc[0]["move"], ((ten, garb), ret)
+
+    def predict_full(self, el):
 
         # multiple moves out of transform
-        fens = inp[0]["fen"]
-        played_move = inp[0]["played_move"]
-        tens = inp[1][0]
-        desc = inp[1][1]
-        ret = self.model(tens, desc)
-        batch_size = list(ret.size())[0]
-        module_logger()
-        
-        target = torch.zeros(ret.shape, device=ret.device)
-        for b in range(batch_size):
-            fen = fens[b]
-            board = chess.Board(fen)
+        # el [0]    => fen
+        # el [1]    => played move
+        # el [2][0] => figure placement on the board
+        # el [2][1] => en passant, castling
+        # el [3]    => output of nn
+        fen = el[0]
+        played_moves = el[1]
+        model_ret = el[3]
+
+        target = torch.zeros(model_ret.shape, device=model_ret.device)
+        for b in range(model_ret.shape[0]):
+            board = chess.Board(fen[b])
             legales = list(board.legal_moves)
             uci_legales = [m.uci() for m in legales]
             for index, row in self.moves.iterrows():
 
                 move = row["move"]
-                
                 if move in uci_legales:
-                    target[b, index] = self.min_legal_move_reward
+                    target[b, 0, index] = self.legal_move_reward
 
-                    if move == played_move[b]:
+                    if move == played_moves[b]:
                         # push move and check resulting position
                         m = chess.Move.from_uci(move)
                         board.push(m)
@@ -115,37 +136,20 @@ class AiComputer(Computer):
                         else:
                             board.pop()
                             if board.is_en_passant(m):
-                                target[b, index] = Computer.piece_score_text["p"]
+                                target[b, 0, index] = Computer.piece_score_text["p"]
                             elif board.is_capture(m):
-                                target[b, index] = Computer.piece_score_text[board.piece_at(m.to_square).symbol().lower()]
-        return ret, target
-
-    @d.timer_log
-    def learn(self, side, query):
-
-        d = AiComputer.create_dataset(query, side)
-        loader = DataLoader(d, batch_size=100, shuffle=True)
-        
-        mean_loss = torch.zeros(1, device=AiComputer.cuda_device)  
-        for a, b in enumerate(loader):
-            net_ret, target = self.predict_full(b)
-            self.optimizer.zero_grad()
-            loss = self.loss_criterion(net_ret, target)
-            mean_loss += loss
-            loss.backward()
-            self.optimizer.step()
-
-        if self.legal_move_reward > self.min_legal_move_reward:
-            self.legal_move_reward = self.legal_move_reward * self.decay
+                                target[b, 0, index] = Computer.piece_score_text[board.piece_at(m.to_square).symbol().lower()]
+                            elif board.is_check(m):
+                                target[b, 0, index] = 5
+                            elif board.is_castling(m):
+                                target[b, 0, index] = 3
+            target[b, 0, :].mul_(torch.max(target[b, 0, :]).item())
+        return model_ret, target
 
     @staticmethod
-    def create_dataset(query, side):
-
-        # get all the nodes from graph element with the given nodename
+    def create_dataset(data):
         dataset = AiComputer.ChessMovesDataset(
-            query_nodes=query,
-            side=side,
-            transform=AiComputer.TransformToTensor()
+            training_set=data,
         )
 
         return dataset
@@ -192,52 +196,94 @@ class AiComputer(Computer):
         if model_stats is not None:
             module_logger().info(f"\n{str(model_stats)}")
 
+    def training(self):
+        i = 1
+        self.prev_game = None
+        while True:
+            training_set:List[Tuple[str, str, Tuple[torch.Tensor, torch.Tensor], torch.Tensor]] = list()
+            print(f"############################\nIteration: {i}")
+
+            should_print = random.random() > 0.9
+            ret = self.__single_game(should_print)
+            training_set.extend(ret)
+            
+            dt = self.create_dataset(training_set)
+            dl = DataLoader(dt, batch_size=len(training_set))
+            i += 1
+            mean_loss = list()
+            for _, el in enumerate(dl):
+
+                ret, target = self.predict_full(el)
+                loss = self.loss_criterion(ret, target)
+                mean_loss.append(loss.item())
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+            
+            # save model
+            print("----------------------")
+            pprint(mean_loss)
+            print("----------------------")
+            print(f"Mean Loss: {np.mean(mean_loss)}")
+
+            self.save_model("model3.pt")
+
+
+    def __single_game(self, p):
+        board = chess.Board()
+        pgn = chess.pgn.Game()
+        pgn.headers["White"] = "roofus"
+        pgn.headers["Black"] = "doofus"
+        pgn.setup(board)
+        node = None
+        
+        game_set = list()
+        while not board.is_game_over():
+            m_uci, temp = self.__predict_single(board.fen())
+            move = chess.Move.from_uci(m_uci)
+            assert move in board.legal_moves
+
+            board.push(move)
+            a, b = temp
+            game_set.append((board.fen(), move.uci(), a, b))
+
+            if node is None:
+                node = pgn.add_variation(move)
+            else:
+                node = node.add_variation(move)
+
+        pgn.headers["Result"] = board.result()
+        if p:
+            print("################################################")
+            print(pgn)
+        # save the game
+        if self.prev_game is not None:
+            test = True
+            for a, b in zip(self.prev_game.mainline_moves(), pgn.mainline_moves()):
+                if a.uci() != b.uci():
+                    test = False
+                    break
+            if test:
+                print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+        
+        self.prev_game = pgn
+        with open(f"{self.games_path}/{datetime.now().strftime('%d%m%Y_%H%M%S')}.pgn", mode="w") as f:
+            f.write(str(pgn))
+
+        return game_set
+
     class ChessMovesDataset(Dataset):
         # class for future building of chess moves dataset
         # multiple games into one 
 
-        def __init__(self, query_nodes, side, transform=None):
-            """
-            query must have pgn in order to be added to games dataset
-            and the last element must be the Game Node
-            otherwise error
-            """
-
-            self.tf1 = AiComputer.TranformToFenlist(side)
-            self.tf2 = transform
-            
-            # assert transform2 is not None and transform1 is None
-            self.games_positions = list()
-            i = 0 
-            for game in query_nodes:
-                assert "Game" in game.nodes[-1].labels
-                
-                temp = dict(game.nodes[-1])
-                assert temp["game_pgn"] is not None
-
-                d = self.tf1(temp["game_pgn"])
-
-                for j in range(d["counter"]):
-                    fenn = d["positions"][j]
-                    move = d["played_move"][j]
-                    if fenn not in self.games_positions:
-                        item = dict()
-                        item["fen"] = fenn
-                        item["played_move"] = move
-                        self.games_positions.append(item)
-                i += 1
+        def __init__(self, training_set:List[Tuple[str, str, Tuple[torch.Tensor, torch.Tensor], torch.Tensor]]):
+            self.games_positions = training_set
 
         def __len__(self):
             return len(self.games_positions)
 
         def __getitem__(self, idx):
-
-            item = self.games_positions[idx]
-            ten = ""
-            if self.tf2 is not None:
-                ten = self.tf2(item["fen"])
-            return item, ten
-
+            return self.games_positions[idx]
 
     class TranformToFenlist(object):
         """
@@ -318,7 +364,6 @@ class AiComputer(Computer):
                         rank_tensor[i, j] = piece
                         j += 1
                 i += 1
-            rank_tensor.unsqueeze_(0)
             return rank_tensor, desc
 
     @staticmethod
@@ -405,19 +450,82 @@ class AiComputer(Computer):
             rows_ar.append(row_str)
         return "/".join(rows_ar)
 
+    @staticmethod
+    def generate_moves_list():
+        ret = list()
+
+        # Queen moves
+        base_fen_list = ["8", "8", "8", "8", "8", "8", "8", "8"]
+        garbage = " w - - 0 1"
+        for rank in range(8):
+            for file in range(8):
+
+                # create fen
+                fen = base_fen_list.copy()
+                first = "" if file == 0 else str(file)
+                last = "" if file == 7 else str(7 - file)
+
+                fen[rank] = f"{first}Q{last}"
+                f = "/".join(fen) + garbage
+
+                board = chess.Board(f)
+                for move in list(board.legal_moves):
+                    ret.append(move)
+
+        # Knight moves
+        base_fen_list = ["8", "8", "8", "8", "8", "8", "8", "8"]
+        garbage = " w - - 0 1"
+        for rank in range(8):
+            for file in range(8):
+
+                # create fen
+                fen = base_fen_list.copy()
+                first = "" if file == 0 else str(file)
+                last = "" if file == 7 else str(7 - file)
+
+                fen[rank] = f"{first}N{last}"
+                f = "/".join(fen) + garbage
+
+                board = chess.Board(f)
+                for move in list(board.legal_moves):
+                    ret.append(move)
+
+        # promotions from 2-1 and from 7-8
+        # 3 moves from each central square, 
+        # 2 moves from the sides,
+        # 4 promotion options
+        temp = "8/PPPPPPPP/8/8/8/8/pppppppp/8 w - - 0 1"
+        prom = chess.Board(temp).legal_moves
+
+        # pawn pushes
+        for move in list(prom):
+            ret.append(move)
+
+        temp = "nnnnnnnn/PPPPPPPP/8/8/8/8/pppppppp/8 w - - 0 1"
+        prom = chess.Board(temp).legal_moves
+
+        # pawn takes
+        for move in list(prom):
+            ret.append(move)
+
+        # repeat for black side
+        temp = "8/PPPPPPPP/8/8/8/8/pppppppp/8 b - - 0 1"
+        prom = chess.Board(temp).legal_moves
+
+        # pawn pushes
+        for move in list(prom):
+            ret.append(move)
+
+        temp = "8/PPPPPPPP/8/8/8/8/pppppppp/NNNNNNNN b - - 0 1"
+        prom = chess.Board(temp).legal_moves
+
+        # pawn takes
+        for move in list(prom):
+            ret.append(move)
+
+        return ret
 
 if __name__ == "__main__":
 
-    ai = AiComputer()
-
-    db = Graph("bolt://localhost:7687", auth=("neo4j", "s3cr3t"))
-    matcher = NodeMatcher(db)
-
-    games = matcher.match("Game").all()
-    sessions = matcher.match("TrainingNode").first()
-
-    rel_matcher = RelationshipMatcher(db)
-    res = rel_matcher.match((sessions, None), "Played").all()
-
-    f = "r2qkb1r/pppn1ppp/8/3Pp3/4Q3/8/PP1P1PPP/R1B1KBNR w KQkq e6 0 8"
-    print(ai.predict_single(f))
+    eng = AiComputer(net=Net)
+    eng.training()

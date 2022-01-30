@@ -7,12 +7,15 @@ class Net(nn.Module):
     def __init__(self, transform):
         super(Net, self).__init__()
         self.fc1 = nn.Linear(in_features=85, out_features=64)
-        self.fc2 = nn.Linear(in_features=64, out_features=256)
-        self.fc3 = nn.Linear(in_features=256, out_features=512)
-        self.fc4 = nn.Linear(in_features=512, out_features=1028)
+        self.fc2 = nn.Linear(in_features=64, out_features=128)
+        self.fc3 = nn.Linear(in_features=128, out_features=256)
+        self.lstm = nn.LSTM(256, 256, 5)
 
-        self.action_head = nn.Linear(in_features=1028, out_features=1968)
-        self.value_head = nn.Linear(in_features=1028, out_features=1)
+        self.fc4 = nn.Linear(in_features=256, out_features=1024)
+
+        self.action_head1 = nn.Linear(in_features=1024, out_features=1500)
+        self.action_head2 = nn.Linear(in_features=1500, out_features=1968)
+        self.value_head = nn.Linear(in_features=1024, out_features=1)
 
         self.transform = transform
 
@@ -23,9 +26,10 @@ class Net(nn.Module):
         x = F.mish(self.fc1(x))
         x = F.mish(self.fc2(x))
         x = F.mish(self.fc3(x))
+        x, _ = self.lstm(x)
         x = F.mish(self.fc4(x))
 
-        action_logits = self.action_head(x)
+        action_logits = self.action_head2(F.mish(self.action_head1(x)))
         value_logit = self.value_head(x)
 
         return F.softmax(action_logits, dim=1), torch.tanh(value_logit)
@@ -38,9 +42,12 @@ class Net(nn.Module):
             x = F.mish(self.fc1(x))
             x = F.mish(self.fc2(x))
             x = F.mish(self.fc3(x))
+            x.unsqueeze_(0)
+            x, _ = self.lstm(x)
+            x.squeeze_(0)
             x = F.mish(self.fc4(x))
 
-            action_logits = self.action_head(x)
+            action_logits = self.action_head2(F.mish(self.action_head1(x)))
             value_logit = self.value_head(x)
 
             return F.softmax(action_logits, dim=1), torch.tanh(value_logit)

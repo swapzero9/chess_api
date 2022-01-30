@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List, Dict, Tuple, Union
 import time
 
 
@@ -50,3 +50,5 @@ class TrainingNodeList(BaseModel):
 class SelectTrainingNode(BaseModel):
     timestamp: Optional[int] = round(time.time() * 1000)
     node_name: str
+    type: str
+    game_number: int
