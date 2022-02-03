@@ -52,3 +52,9 @@ class SelectTrainingNode(BaseModel):
     node_name: str
     type: str
     game_number: int
+
+class ChessGamesStatistics(BaseModel):
+    timestamp: Optional[int] = round(time.time() * 1000)
+    duel_statistics: Dict
+    training_statistics: Dict
+    validation_statistics: Dict

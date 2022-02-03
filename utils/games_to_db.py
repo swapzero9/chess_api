@@ -32,7 +32,7 @@ def create_games(db, parent_node, path):
         node = Node("GameNode",
             game_number=(index + 1),
             game_pgn=str(pgn),
-            timestamp=file.split(".")[0],
+            timestamp=t,
             winner=(pgn.headers["Result"])
         )
         rel = Relationship(parent_node, "Played", node)

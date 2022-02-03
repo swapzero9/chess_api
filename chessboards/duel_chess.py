@@ -8,8 +8,7 @@ from api.engines.stockfish_engine.computer import StockfishComputer
 import api.utils.decorators as d
 from api.utils.logger import MyLogger
 from py2neo import Graph, Node
-
-import chess, os
+import chess, chess.pgn, os, io
 
 router = APIRouter()
 engs = {}
@@ -56,10 +55,23 @@ async def position(details: InputFen):
 @router.post("/save_game")
 async def save_game(details: DuelChessGame):
     
+    p = io.StringIO(details.pgn)
+    game = chess.pgn.read_game(p)
+    
+    game.headers["White"] = "Player"
+    game.headers["Black"] = details.opponent
+
+    board = chess.Board()
+    for move in game.mainline_moves():
+        board.push(move)
+    
+    game.headers["Result"] = board.result()
+
     n = Node("DuelGame", 
         timestamp=details.timestamp,
         opponent=details.opponent,
-        pgn=details.pgn
+        result=board.result(),
+        pgn=str(game)
     )
 
     db = Graph(os.environ["DB_URL"], auth=(os.environ["DB_ADMIN"], os.environ["DB_PASS"]))
@@ -72,6 +84,6 @@ async def save_game(details: DuelChessGame):
         module_logger().exception(ex)
     
     return {
-        "hurray": "nay"
+        "hurray": "yaaay"
     }
 

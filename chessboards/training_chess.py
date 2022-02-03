@@ -17,26 +17,40 @@ def last_game(details: SelectTrainingNode):
             os.environ["DB_PASS"]
         ))
 
-        # game = db.run(f"MATCH (n:TrainingNode {{name: \"{details.node_name}\"}})-->(t:TrainingIteration)-->(g:Game {{}}) RETURN g.game_pgn ORDER BY t.timestamp DESC LIMIT 1").to_series().to_list()
-        
+        nm = NodeMatcher(db)
+        rl = RelationshipMatcher(db)
         if details.type == "training":
-            game = db.run(f'MATCH (n:TrainingNode {{name: "{details.node_name}"}})-[p:Played]->(g:GameNode {{game_number: {details.game_number}}}) return g.game_pgn LIMIT 1').to_series().to_list()
-            if len(game) == 0:
+            # game = db.run(f'MATCH (n:TrainingNode {{name: "{details.node_name}"}})-[p:Played]->(g:GameNode {{game_number: {details.game_number}}}) return g.game_pgn LIMIT 1').to_series().to_list()
+            
+            temp = rl.match((
+                nm.match("TrainingNode", name=details.node_name), 
+                nm.match("GameNode", game_number=details.game_number)
+            ), r_type="Played")._nodes
+            
+            if len(temp) == 0:
                 return ErrorDatabase(error="no games found")
             else:
+                game = temp[1].all()[0]
                 return ChessGame(
-                    pgn=game[0],
-                    iteration=1,
+                    pgn=game["game_pgn"],
+                    iteration=game["game_number"],
                     engine_name=details.node_name
                 )
         elif details.type == "validation":
-            game = db.run(f'MATCH (n:ValidationNode {{name: "{details.node_name}"}})-[p:Played]->(g:GameNode {{game_number: {details.game_number}}}) return g.game_pgn LIMIT 1').to_series().to_list()
-            if len(game) == 0:
+            #game = db.run(f'MATCH (n:ValidationNode {{name: "{details.node_name}"}})-[p:Played]->(g:GameNode {{game_number: {details.game_number}}}) return g.game_pgn LIMIT 1').to_series().to_list()
+            
+            temp = rl.match((
+                nm.match("ValidationNode", name=details.node_name), 
+                nm.match("GameNode", game_number=details.game_number)
+            ), r_type="Played")._nodes
+
+            if len(temp) == 0:
                 return ErrorDatabase(error="no games found")
             else:
+                game = temp[1].all()[0]
                 return ChessGame(
-                    pgn=game[0],
-                    iteration=1,
+                    pgn=game["game_pgn"],
+                    iteration=game["game_number"],
                     engine_name=details.node_name
                 )
 
