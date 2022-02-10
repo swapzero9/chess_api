@@ -40,7 +40,7 @@ class AiComputer(Computer):
         if load_model:
             m = os.listdir(self.model_path)
             if self.model_name in m:
-                self.model.load_state_dict(torch.load(f"{self.model_path}/{self.model_name}"))
+                self.model.load_state_dict(torch.load(f"{self.model_path}/{self.model_name}", map_location=AiComputer.cuda_device))
 
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.01)
         self.loss_criterion = nn.MSELoss()

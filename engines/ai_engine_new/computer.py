@@ -1,3 +1,4 @@
+from time import time
 import torch
 import chess, chess.pgn
 import numpy as np
@@ -11,6 +12,7 @@ from typing import List, Dict, Tuple
 from datetime import datetime
 from api.utils.all_moves_generator.generate import generate_moves_list
 from random import shuffle
+import torch.multiprocessing as mp
 
 
 @dataclass
@@ -36,7 +38,8 @@ class AiComputer2:
         self.transform = AiComputer2.TransformToTensor()
         self.model = net(self.transform)
         self.model.to(self.CUDA_DEVICE)
-        # self.model_summary()
+        self.model.share_memory()
+        self.model_summary()
 
         self.model_path = "./api/engines/ai_engine_new/models"
         # self.model_path = "./models"
@@ -47,9 +50,7 @@ class AiComputer2:
             m = os.listdir(self.model_path)
             if self.model_name in m:
                 print("load_model")
-                self.model.load_state_dict(torch.load(f"{self.model_path}/{self.model_name}"))
-
-        self.__mcts = AiComputer2.MonteCarloSearch(self.model)
+                self.model.load_state_dict(torch.load(f"{self.model_path}/{self.model_name}", map_location=AiComputer2.CUDA_DEVICE))
 
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
         self.loss_criterion = nn.MSELoss()
@@ -62,39 +63,63 @@ class AiComputer2:
                 torch.save(self.model.state_dict(), f"{self.model_path}/{self.model_name}")
 
     def model_summary(self):
-        model_stats = summary(self.model, [(1,85)])
+        model_stats = summary(self.model, [(1,1,85)])
         if model_stats is not None:
             print(model_stats)
 
     def think(self, fen):
         b = chess.Board(fen)
-        self.__mcts(b)
+        temp_mcts = self.MonteCarloSearch(self.model, 200)
+        probab, _ = temp_mcts.get_probabilities(b)
+        move_indx = np.random.choice(len(AiComputer2.MOVES), p=probab)
+        move = AiComputer2.MOVES[move_indx]
+        if move not in b.legal_moves:
+            print(b.fen())
+            print(move)
+            assert move in b.legal_moves
+
+        return move
 
     def learn(self):
-        for i in range(0, 10000):
+        proc_num = 8
+        for i in range(0, 100000):
             print(f"#############################\nIteration: {i}")
             iteration_set = list()
 
             should_print = True
-            for _ in range(5):
-                temp = self.__execute_session(should_print)
-                iteration_set.extend(temp)
-                should_print = False
+            manager = mp.Manager()
+            ret = manager.dict()
+            processes = list()
+            seed_list = list()
+            while True:
+                seed_list = np.random.randint(0, 10000, size=proc_num).tolist()
+                if len(seed_list) == len(list(set(seed_list))):
+                    break
+            for j in range(proc_num):
+                p = mp.Process(target=self.__execute_session, args=(should_print, j, seed_list[j], ret))
+                processes.append(p)
+                p.start()
+
+            for p in processes:
+                p.join()
             
+            for key, value in ret.items():
+                print(f"received {key}")
+                iteration_set.extend(value)
+
             shuffle(iteration_set)
             self.__train(iteration_set)
             self.save_model()
-            self.__mcts.reset_game_tree()
 
     def __train(self, tset):
         pi_losses = list()
         v_losses = list()
 
-        epoch_num = 2
+        epoch_num = 3
         print(f"Entered training with {len(tset)} sets of data")
 
         for e in range(epoch_num):
-            print(f"Epoch: {e}")
+            print(f"Epoch: {e+1}")
             dt = AiComputer2.TrainingDataset(tset)
             dl = DataLoader(dt, batch_size=1, shuffle=True)
             for _, b in enumerate(dl):
@@ -124,11 +149,10 @@ class AiComputer2:
     def loss_v(self, targets, outputs):
         return self.loss_criterion(targets, outputs)
 
-
     def create_moveset(self, arg):
         return self.ChessMoveset(arg)
 
-    def __execute_session(self, p:bool):
+    def __execute_session(self, p:bool, id:int, seed, ret_dict):
         train_set = list()
         board = chess.Board()
         pgn = chess.pgn.Game()
@@ -136,12 +160,14 @@ class AiComputer2:
         pgn.headers["Black"] = "doofus"
         pgn.setup(board)
         node = None
-
+        np.random.seed(seed)
+        mcts = AiComputer2.MonteCarloSearch(self.model)
+        print(f"running the game {id}")
         # run single training session, save all the positions and results from net
         result = None
         while not board.is_game_over() and board.fullmove_number < 75:
             
-            probabilities, _ = self.__mcts.get_probabilities(board)
+            probabilities, _ = mcts.get_probabilities(board)
             train_set.append([board.fen(), probabilities, None])
             move_indx = np.random.choice(len(AiComputer2.MOVES), p=probabilities)
             move = AiComputer2.MOVES[move_indx]
@@ -161,7 +187,7 @@ class AiComputer2:
         else:
             pgn.headers["Result"] = board.result()
         try:
-            print(f"Game finished! \nResult: {board.result()}\nGame Val: {self.__mcts.gt.Es[AiComputer2.get_base_board(board)]}")
+            print(f"Game finished! \nResult: {board.result()}\nGame Val: {mcts.gt.Es[AiComputer2.get_base_board(board)]}")
         except Exception as ex:
             print(ex)
 
@@ -176,7 +202,7 @@ class AiComputer2:
 
         result = AiComputer2.get_normalised_outcome(board)
         train_set = [[x[0], x[1], result] for x in train_set]
-        return train_set
+        ret_dict[id] = train_set
 
     class TrainingDataset(Dataset):
 
@@ -262,10 +288,10 @@ class AiComputer2:
 
     class MonteCarloSearch:
 
-        def __init__(self, model) -> None:
+        def __init__(self, model, am=50) -> None:
             self.model:AiComputer2.Net = model
             self.gt = GameTree()
-            self.mcts_am = 40
+            self.mcts_am = am
 
         def __call__(self, board:chess.Board):
 

@@ -1,4 +1,4 @@
-from aaa.monte_carlo_algorithm import MonteCarloSearch
+
 from api.engines.template_computer import Computer
 from dataclasses import dataclass
 import chess, random
@@ -6,21 +6,22 @@ import numpy as np
 
 class MonteCarloComputer(Computer):
 
-
     def __init__(self, iterations):
         super().__init__("whatever")
 
         self.iterations = iterations
-        self.mcts = MonteCarloSearch()
+        self.mcts = MonteCarloComputer.MonteCarloSearch()
 
     def think(self, fen:str) -> chess.Move:
-
+        b = chess.Board(fen)
         move = self.mcts(fen, self.iterations)
         r = chess.Move.from_uci(move)
-        return r
+        if r in b.legal_moves:
+            return r
+        else:
+            return list(b.legal_moves)[0]
 
     class MonteCarloSearch:
-
         @dataclass
         class Node:
             p: chess.Board = chess.Board() # position of 

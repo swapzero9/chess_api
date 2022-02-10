@@ -6,14 +6,16 @@ import torch.nn.functional as F
 class Net(nn.Module):
     def __init__(self, transform):
         super(Net, self).__init__()
-        self.fc1 = nn.Linear(in_features=85, out_features=128)
-        self.fc2 = nn.Linear(in_features=128, out_features=256)
-        self.fc3 = nn.Linear(in_features=256, out_features=512)
-        self.lstm1 = nn.LSTM(128, 128, 5)
-        self.lstm2 = nn.LSTM(256, 256, 5)
-        self.lstm3 = nn.LSTM(512, 512, 5)
+        self.fc1 = nn.Linear(in_features=85, out_features=64)
+        self.fc2 = nn.Linear(in_features=64, out_features=128)
+        self.fc3 = nn.Linear(in_features=128, out_features=256)
+        self.fc4 = nn.Linear(in_features=256, out_features=512)
+        self.lstm1 = nn.LSTM(64, 64, 4)
+        self.lstm2 = nn.LSTM(128, 128, 4)
+        self.lstm3 = nn.LSTM(256, 256, 4)
+        self.lstm4 = nn.LSTM(512, 512, 4)
 
-        self.fc4 = nn.Linear(in_features=512, out_features=1024)
+        self.fc5 = nn.Linear(in_features=512, out_features=1024)
 
         self.action_head1 = nn.Linear(in_features=1024, out_features=1500)
         self.action_head2 = nn.Linear(in_features=1500, out_features=1968)
@@ -32,6 +34,8 @@ class Net(nn.Module):
         x = F.mish(self.fc3(x))
         x, _ = self.lstm3(x)
         x = F.mish(self.fc4(x))
+        x, _ = self.lstm4(x)
+        x = F.mish(self.fc5(x))
 
         action_logits = self.action_head2(F.mish(self.action_head1(x)))
         value_logit = self.value_head(x)
@@ -51,6 +55,8 @@ class Net(nn.Module):
             x = F.mish(self.fc3(x))
             x, _ = self.lstm3(x)
             x = F.mish(self.fc4(x))
+            x, _ = self.lstm4(x)
+            x = F.mish(self.fc5(x))
             x.squeeze_(0)
 
             action_logits = self.action_head2(F.mish(self.action_head1(x)))

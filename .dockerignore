@@ -1,0 +1,6 @@
+logs
+database
+__pycache__
+stockfish.exe
+lichess_db.pgn
+test.json

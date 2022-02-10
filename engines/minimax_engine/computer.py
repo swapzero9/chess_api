@@ -39,10 +39,10 @@ class MiniMaxComputer(Computer):
         
         if board.fullmove_number <= 10:
             move = self.opening_lookup(board)
-        elif num_pieces > 6:
+        elif num_pieces >= 6:
             move, _ = self.minimax(board, self.depth, -math.inf, math.inf)
         else:
-            move, _ = self.syzygy_lookup(board)
+            move = self.syzygy_lookup(board)
 
         return move
 

@@ -8,11 +8,15 @@ from api.chessboards import enigne_chess
 from api.chessboards import statistics
 
 app = FastAPI()
-
-origins = [
-    "http://localhost:8080",
-    "http://192.168.0.129:8080",
-]
+if "PAGE_URL" not in os.environ:
+    origins = [
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+    ]
+else:
+    origins = [
+        os.environ["PAGE_URL"]
+    ]
 
 @app.on_event("startup")
 def setup_environment():

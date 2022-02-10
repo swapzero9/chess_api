@@ -1,4 +1,4 @@
-FROM python:slim
+FROM python:3.9
 
 WORKDIR "/usr/src/app"
 
@@ -7,9 +7,11 @@ RUN apt-get update
 RUN apt-get install -y curl
 RUN apt-get install -y vim
 
-COPY ./api ./api
-
+COPY . ./api
+RUN mkdir api/logs
 RUN pip install --no-cache-dir -r api/requirements.txt
+
+COPY ./engines/minimax_engine/replace_init.py /usr/local/lib/python3.9/site-packages/chess/__init__.py
 
 EXPOSE 8000
 

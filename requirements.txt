@@ -2,6 +2,6 @@ chess
 py2neo
 fastapi
 pandas
-stockfish
 torchinfo
 uvicorn
+torch

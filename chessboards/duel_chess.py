@@ -5,6 +5,9 @@ from api.engines.minimax_engine.computer import MiniMaxComputer
 from api.engines.ai_engine.computer import AiComputer
 from api.engines.ai_engine.models.architecture3.net import Net
 from api.engines.stockfish_engine.computer import StockfishComputer
+from api.engines.ai_engine_new.computer import AiComputer2
+from api.engines.ai_engine_new.models.architecture3.net import Net as Net2
+from api.engines.montecarlo_engine.computer import MonteCarloComputer
 import api.utils.decorators as d
 from api.utils.logger import MyLogger
 from py2neo import Graph, Node
@@ -21,9 +24,11 @@ module_logger = MyLogger(__name__)
 async def startup():
     print("init engines")
     engs["minimax"] = MiniMaxComputer()
+    engs["montecarlo"] = MonteCarloComputer(2000)
     engs["random"] = RandomComputer()
     engs["stockfish"] = StockfishComputer("b", 200)
     engs["ai"] = AiComputer(net=Net)
+    engs["ai2"] = AiComputer2(net=Net2, load_model=True, model_name="model3.pt")
     print("inited")
 
 @d.timer_log
