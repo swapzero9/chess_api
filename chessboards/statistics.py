@@ -17,6 +17,8 @@ def stat_data():
     duel_ret = dict()
     for i in range(len(q)):
         rec = dict(q.iloc[i])
+        if rec["opponent"] == "":
+            continue
         if rec["opponent"] not in duel_ret:
             duel_ret[rec["opponent"]] = [
                 1 if rec["result"] == "0-1" else 0,
@@ -42,9 +44,36 @@ def stat_data():
             ind = 0 if rec["result"] == "1-0" else (1 if rec["result"] == "0-1" else 2)
             training_ret[rec["tsession"]][ind] += 1
 
+    #validation data
+    valid_ret = dict()
+    q = db.run("Match(n:ValidationNode)-[p:Played]->(g:GameNode) return n.name as tsession, g.winner as result, g.winner_c as wc, g.p1 as p1, g.p2 as p2").to_data_frame()
+    for i in range(len(q)):
+        rec = dict(q.iloc[i])
+        if rec["tsession"] not in valid_ret:
+            valid_ret[rec["tsession"]] = {
+                rec["p1"]: [0, 0, 0],
+                rec["p2"]: [0, 0, 0]
+            }
+            if rec["wc"] is None:
+                valid_ret[rec["tsession"]][rec["p1"]][2] += 1
+                valid_ret[rec["tsession"]][rec["p2"]][2] += 1
+            else: 
+                ind = 0 if rec["result"] == "1-0" else 1
+                pind = "p1" if rec["result"] == "1-0" else "p2"
+                valid_ret[rec["tsession"]][rec[pind]][ind] += 1
+        else:
+            if rec["wc"] is None:
+                valid_ret[rec["tsession"]][rec["p1"]][2] += 1
+                valid_ret[rec["tsession"]][rec["p2"]][2] += 1
+            else: 
+                ind = 0 if rec["result"] == "1-0" else 1
+                pind = "p1" if rec["result"] == "1-0" else "p2"
+                valid_ret[rec["tsession"]][rec[pind]][ind] += 1
+
+
     ret = ChessGamesStatistics(
         duel_statistics=duel_ret,
         training_statistics=training_ret,
-        validation_statistics={},
+        validation_statistics=valid_ret,
     )
     return ret

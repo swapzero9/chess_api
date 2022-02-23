@@ -12,7 +12,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchinfo import summary
 from typing import List, Tuple, Dict
-from api.engines.ai_engine.models.architecture3.net import Net
 import numpy as np
 from datetime import datetime
 
@@ -22,12 +21,12 @@ module_logger = MyLogger(__name__)
 class AiComputer(Computer):
 
     # global cuda_devie
-    cuda_device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    CUDA_DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     def __init__(self, *, load_model=False, model_name="model.pt", net:nn.Module):
         MOVES:List[chess.Move] = AiComputer.generate_moves_list()
         self.model = net()
-        self.model.to(self.cuda_device)
+        self.model.to(self.CUDA_DEVICE)
         # self.model_summary()
 
         self.tsfm = AiComputer.TransformToTensor()
@@ -40,7 +39,7 @@ class AiComputer(Computer):
         if load_model:
             m = os.listdir(self.model_path)
             if self.model_name in m:
-                self.model.load_state_dict(torch.load(f"{self.model_path}/{self.model_name}", map_location=AiComputer.cuda_device))
+                self.model.load_state_dict(torch.load(f"{self.model_path}/{self.model_name}", map_location=AiComputer.CUDA_DEVICE))
 
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.01)
         self.loss_criterion = nn.MSELoss()
@@ -57,7 +56,6 @@ class AiComputer(Computer):
 
 
     def think(self, fen: str) -> chess.Move:
-
         temp = self.predict_single(fen)
         m = chess.Move.from_uci(temp)
         legal = chess.Board(fen).legal_moves
@@ -69,7 +67,6 @@ class AiComputer(Computer):
     def predict_single(self, fen):
         with torch.no_grad():
             ten, garb = self.tsfm(fen)
-            ten.unsqueeze_(0)
             ret = self.model(ten, garb)
 
         cp = self.moves.copy()
@@ -84,13 +81,15 @@ class AiComputer(Computer):
         cp = cp.sort_values(by=[f"legal", f"prediction"], ascending=[False, False])
         return cp.iloc[0]["move"]
 
-    def __predict_single(self, fen):
+    def __predict_single(self, fen, move_stack):
         ten, garb = self.tsfm(fen)
-        ten.unsqueeze_(0)
         ret = self.model(ten, garb)
 
         cp = self.moves.copy()
-        cp["prediction"] = ret[0,:].tolist()
+        temp = ret[0,:].tolist()
+        ms = [m.uci() for m in move_stack[-7:]]
+        temp = [1/10 * m if cp.iloc[i]["move"] in ms else m for i, m in enumerate(temp)]
+        cp["prediction"] = temp
         legal = chess.Board(fen).legal_moves
         uci = list()
         for move in legal:
@@ -99,9 +98,6 @@ class AiComputer(Computer):
         cp["legal"] = cp["move"]
         cp["legal"] = cp["legal"].isin(uci)
         cp = cp.sort_values(by=[f"legal", f"prediction"], ascending=[False, False])
-        t = random.randint(0, 5)
-        if cp.iloc[1]["legal"] and t > 3:
-            return cp.iloc[1]["move"], ((ten, garb), ret)
         return cp.iloc[0]["move"], ((ten, garb), ret)
 
     def predict_full(self, el):
@@ -113,12 +109,15 @@ class AiComputer(Computer):
         # el [2][1] => en passant, castling
         # el [3]    => output of nn
         fen = el[0]
-        played_moves = el[1]
         model_ret = el[3]
 
         target = torch.zeros(model_ret.shape, device=model_ret.device)
         for b in range(model_ret.shape[0]):
             board = chess.Board(fen[b])
+
+            if board.is_game_over():
+                continue
+
             legales = list(board.legal_moves)
             uci_legales = [m.uci() for m in legales]
             for index, row in self.moves.iterrows():
@@ -127,23 +126,51 @@ class AiComputer(Computer):
                 if move in uci_legales:
                     target[b, 0, index] = self.legal_move_reward
 
-                    if move == played_moves[b]:
-                        # push move and check resulting position
-                        m = chess.Move.from_uci(move)
-                        board.push(m)
-                        if board.is_checkmate():
-                            target[b, index] = 100000
+                    # push move and check resulting position
+                    m = chess.Move.from_uci(move)
+                    turn = board.turn
+                    board.push(m)
+                    
+                    # checkmate
+                    if board.is_checkmate():
+                        board.pop()
+                        target[b, 0, index] = 5000 * (1 if turn else -1)
+                        continue
+
+                    # count pieces
+                    score = 0
+                    for key in self.piece_score:
+                        score += (
+                            len(board.pieces(key, turn)) - len(board.pieces(key, not turn))
+                        ) * self.piece_score[key]
+                    target[b, 0, index] += score if score > 0 else 0
+
+                    # pawn advancement
+                    score = 0
+                    if turn:
+                        score += sum([int(i/8) + 1 for i in board.pieces(1, True)])
+                    else:
+                        score += sum([(8 - int(i/8)) for i in board.pieces(1, False)])
+                    target[b, 0, index] += score * 2
+
+                    # piece activity
+                    target[b, 0, index] += sum([len(board.attackers(turn, sq)) for sq in range(64)])
+
+                    # king safety, count pieces around 
+                    piece_sq = list(board.pieces(6, turn))[0] # king placement
+                    sq = [piece_sq - i for i in range(-2, 3)]
+                    squares = [j*8 + i for j in range(-2, 3) for i in sq if j*8+i >= 0 and j*8+i < 64 and j*8+i != piece_sq]
+                    
+                    score = 0
+                    for s in squares:
+                        if board.piece_at(s) is not None:
+                            score += (1 if board.piece_at(s) == turn else -1)
                         else:
-                            board.pop()
-                            if board.is_en_passant(m):
-                                target[b, 0, index] = Computer.piece_score_text["p"]
-                            elif board.is_capture(m):
-                                target[b, 0, index] = Computer.piece_score_text[board.piece_at(m.to_square).symbol().lower()]
-                            elif board.is_check(m):
-                                target[b, 0, index] = 5
-                            elif board.is_castling(m):
-                                target[b, 0, index] = 3
-            target[b, 0, :].mul_(torch.max(target[b, 0, :]).item())
+                            score -= 1
+                    target[b, 0, index] += score * 10 if score > 0 else 0
+                    board.pop()
+
+            target[b, 0, :].mul_(1 / 5000)
         return model_ret, target
 
     @staticmethod
@@ -208,7 +235,7 @@ class AiComputer(Computer):
             training_set.extend(ret)
             
             dt = self.create_dataset(training_set)
-            dl = DataLoader(dt, batch_size=len(training_set))
+            dl = DataLoader(dt, batch_size=len(dt), shuffle=True)
             i += 1
             mean_loss = list()
             for _, el in enumerate(dl):
@@ -222,11 +249,10 @@ class AiComputer(Computer):
             
             # save model
             print("----------------------")
-            pprint(mean_loss)
-            print("----------------------")
             print(f"Mean Loss: {np.mean(mean_loss)}")
+            print("----------------------")
 
-            self.save_model("model3.pt")
+            self.save_model()
 
 
     def __single_game(self, p):
@@ -239,18 +265,19 @@ class AiComputer(Computer):
         
         game_set = list()
         while not board.is_game_over():
-            m_uci, temp = self.__predict_single(board.fen())
+            m_uci, temp = self.__predict_single(board.fen(), board.move_stack)
             move = chess.Move.from_uci(m_uci)
             assert move in board.legal_moves
-
-            board.push(move)
+            
+            mmmm = move if board.fullmove_number > 3 else random.choice(list(board.legal_moves))
+            board.push(mmmm)
             a, b = temp
             game_set.append((board.fen(), move.uci(), a, b))
 
             if node is None:
-                node = pgn.add_variation(move)
+                node = pgn.add_variation(mmmm)
             else:
-                node = node.add_variation(move)
+                node = node.add_variation(mmmm)
 
         pgn.headers["Result"] = board.result()
         if p:
@@ -342,17 +369,19 @@ class AiComputer(Computer):
 
             temp = fen_raw.split(" ") 
             fen = temp.pop(0)
-            temp.pop() # pop last element off of list (move number)
+            turn = temp.pop(0)
             castle = AiComputer.castle_move(fen_raw)
             en = AiComputer.en_passant(fen_raw)
             desc = torch.cat((castle, en), dim=1)
-            desc = desc.to(AiComputer.cuda_device)
+            desc = desc.to(AiComputer.CUDA_DEVICE)
             
             ranks = fen.split("/")
+            if turn == "b":
+                ranks.reverse()
             i = 0 
             rank_tensor = torch.zeros(
                 8, 8, dtype=torch.float32, 
-                device=AiComputer.cuda_device
+                device=AiComputer.CUDA_DEVICE
             )
             for rank in ranks:
                 j = 0
@@ -364,6 +393,7 @@ class AiComputer(Computer):
                         rank_tensor[i, j] = piece
                         j += 1
                 i += 1
+            rank_tensor = rank_tensor.unsqueeze(0)
             return rank_tensor, desc
 
     @staticmethod
@@ -412,7 +442,7 @@ class AiComputer(Computer):
         ranks = fen.split("/")
         i = 0
         rank_tensor = torch.zeros(
-            8, 8, dtype=torch.float32, device=AiComputer.cuda_device
+            8, 8, dtype=torch.float32, device=AiComputer.CUDA_DEVICE
         )
         for rank in ranks:
             j = 0
@@ -527,5 +557,7 @@ class AiComputer(Computer):
 
 if __name__ == "__main__":
 
-    eng = AiComputer(net=Net)
+    from api.engines.ai_engine.models.architecture3.net import Net
+    eng = AiComputer(net=Net, model_name="model3.pt", load_model=True, )
     eng.training()
+    

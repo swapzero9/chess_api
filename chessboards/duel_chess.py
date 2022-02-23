@@ -3,10 +3,10 @@ from api.classes.chess_classes import InputFen, OutputFen, DuelChessGame
 from api.engines.random_engine.computer import RandomComputer
 from api.engines.minimax_engine.computer import MiniMaxComputer
 from api.engines.ai_engine.computer import AiComputer
-from api.engines.ai_engine.models.architecture3.net import Net
+from api.engines.ai_engine.models.final.net import Net
 from api.engines.stockfish_engine.computer import StockfishComputer
 from api.engines.ai_engine_new.computer import AiComputer2
-from api.engines.ai_engine_new.models.architecture3.net import Net as Net2
+from api.engines.ai_engine_new.models.final.net import Net as Net2
 from api.engines.montecarlo_engine.computer import MonteCarloComputer
 import api.utils.decorators as d
 from api.utils.logger import MyLogger
@@ -24,11 +24,11 @@ module_logger = MyLogger(__name__)
 async def startup():
     print("init engines")
     engs["minimax"] = MiniMaxComputer()
-    engs["montecarlo"] = MonteCarloComputer(2000)
+    engs["montecarlo"] = MonteCarloComputer(100)
     engs["random"] = RandomComputer()
     engs["stockfish"] = StockfishComputer("b", 200)
-    engs["ai"] = AiComputer(net=Net)
-    engs["ai2"] = AiComputer2(net=Net2, load_model=True, model_name="model3.pt")
+    engs["ai"] = AiComputer(net=Net, load_model=True, model_name="final.pt")
+    engs["ai2"] = AiComputer2(net=Net2, load_model=True, model_name="final.pt")
     print("inited")
 
 @d.timer_log
@@ -36,7 +36,6 @@ async def startup():
 async def position(details: InputFen):
 
     eng = engs[details.targetComputer]
-    print(eng.__class__.__name__)
     # create board and make a move
     board = chess.Board(details.fen)
     move = eng.think(details.fen)

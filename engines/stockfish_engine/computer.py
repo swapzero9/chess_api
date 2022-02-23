@@ -3,6 +3,7 @@ from api.utils.logger import MyLogger
 import chess.engine
 import chess
 import api.utils.decorators as d
+import time
 
 module_logger = MyLogger(__name__)
 
@@ -10,8 +11,9 @@ class StockfishComputer(Computer):
 
     def __init__(self, side, elo, timeout=100):
         super().__init__(side)
-        self.engine_path = "./api/engines/stockfish_engine/stockfish.exe"
+        self.engine_path = "./api/engines/stockfish_engine/stockfish"
         self.engine = chess.engine.SimpleEngine.popen_uci(self.engine_path)
+        self.engine.configure({"Skill Level": 10})
         self.timeout = timeout
         self.starting_elo = elo
         self.current_elo = elo
@@ -22,7 +24,8 @@ class StockfishComputer(Computer):
 
     def think(self, fen):
         board = chess.Board(fen)
-        info = self.engine.analyse(board, chess.engine.Limit(depth=10))
+        info = self.engine.analyse(board, chess.engine.Limit(depth=1))
+        time.sleep(0.2)
         return info["pv"][0]
 
     def set_timeout(self, timeout):

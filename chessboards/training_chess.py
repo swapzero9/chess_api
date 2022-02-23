@@ -22,35 +22,41 @@ def last_game(details: SelectTrainingNode):
         if details.type == "training":
             # game = db.run(f'MATCH (n:TrainingNode {{name: "{details.node_name}"}})-[p:Played]->(g:GameNode {{game_number: {details.game_number}}}) return g.game_pgn LIMIT 1').to_series().to_list()
             
-            temp = rl.match((
-                nm.match("TrainingNode", name=details.node_name), 
-                nm.match("GameNode", game_number=details.game_number)
-            ), r_type="Played")._nodes
+            t_node = nm.match("TrainingNode", name=details.node_name).first()
+            games = nm.match("GameNode", game_number=details.game_number).all()
+            game_node = None
+            for node in games:
+                temp = rl.match((t_node, node), r_type="Played")
+                if temp.count() != 0:
+                    game_node = node
+                    break
             
-            if len(temp) == 0:
+            if game_node is None:
                 return ErrorDatabase(error="no games found")
             else:
-                game = temp[1].all()[0]
                 return ChessGame(
-                    pgn=game["game_pgn"],
-                    iteration=game["game_number"],
+                    pgn=game_node["game_pgn"],
+                    iteration=game_node["game_number"],
                     engine_name=details.node_name
                 )
         elif details.type == "validation":
             #game = db.run(f'MATCH (n:ValidationNode {{name: "{details.node_name}"}})-[p:Played]->(g:GameNode {{game_number: {details.game_number}}}) return g.game_pgn LIMIT 1').to_series().to_list()
-            
-            temp = rl.match((
-                nm.match("ValidationNode", name=details.node_name), 
-                nm.match("GameNode", game_number=details.game_number)
-            ), r_type="Played")._nodes
 
-            if len(temp) == 0:
+            val_node = nm.match("ValidationNode", name=details.node_name).first()
+            games = nm.match("GameNode", game_number=details.game_number).all()
+            game_node = None
+            for node in games:
+                temp = rl.match((val_node, node), r_type="Played")
+                if temp.count() != 0:
+                    game_node = node
+                    break
+            
+            if game_node is None:
                 return ErrorDatabase(error="no games found")
             else:
-                game = temp[1].all()[0]
                 return ChessGame(
-                    pgn=game["game_pgn"],
-                    iteration=game["game_number"],
+                    pgn=game_node["game_pgn"],
+                    iteration=game_node["game_number"],
                     engine_name=details.node_name
                 )
 

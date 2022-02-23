@@ -28,7 +28,6 @@ class MiniMaxComputer(Computer):
             from json import load
             self.opening_db = load(f)
 
-    @d.timer_log
     def think(self, fen: str) -> chess.Move:
         self.transposition_table = dict()
         board = chess.Board(fen)
@@ -99,17 +98,17 @@ class MiniMaxComputer(Computer):
         # number of pieces
         for key in self.piece_score:
             score += (
-                len(board.pieces(key, True)) - len(board.pieces(key, False))
+                len(board.pieces(key, board.turn)) - len(board.pieces(key, not board.turn))
             ) * self.piece_score[key]
 
         # pawn advancement
         if board.turn:
-            score += sum([int(i/8) + 1 for i in board.pieces(1, True)]) / 4
+            score += sum([int(i/8) + 1 for i in board.pieces(1, True)]) / 3
         else:
-            score += sum([(8 - int(i/8)) for i in board.pieces(1, False)]) / 4
+            score += sum([(8 - int(i/8)) for i in board.pieces(1, False)]) / 3
 
-        # piece activity
-        score += sum([len(board.attackers(board.turn, sq)) for sq in range(64)]) / 6
+        # piece activity takes to long
+        score += sum([len(board.attackers(board.turn, sq)) for sq in range(64)]) / 4
 
         score *= 1 if board.turn else -1
         return score
@@ -220,5 +219,5 @@ class MiniMaxComputer(Computer):
 
 if __name__ == "__main__":
 
-    pc = MiniMaxComputer()
+    pc = MiniMaxComputer(depth=7)
     print(pc.think("8/5ppp/R7/4p1k1/1r1p4/1n2PPP1/2r1NK1P/3R4 w - - 0 33"))

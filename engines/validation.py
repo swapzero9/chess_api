@@ -15,7 +15,6 @@ class Validation:
     """
 
     def __init__(self, player1, *, player2=None, batches=500, path=None):
-
         self.player1 = player1
         if player2 is None:
             self.player2 = StockfishComputer("b", 200)
@@ -27,32 +26,7 @@ class Validation:
 
     @d.timer_log
     def __call__(self):
-
-        # # create validation node related to training node
-        # self.validation_session_node = Node(
-        #     "ValidationSession",
-        #     player1=self.player1.__class__.__name__,
-        #     player2=self.player2.__class__.__name__,
-        #     date_start=datetime.today(),
-        #     games_in_batch=self.games_in_batch,
-        #     total_batches=self.total_batches,
-        # )
-        # validation_rel = Relationship(self.training_node, "ValidatingTraining", self.validation_session_node)
-
-        for i in range(self.total_batches):
-
-            # validation_iter = Node(
-            #     "ValidationSessionIteration",
-            #     iteration=i,
-            #     timestamp=datetime.today(),
-            # )
-            # validation_rel = Relationship(self.validation_session_node, "Iteration", validation_iter)
-
-            # self.create_db_elements([
-            #     validation_iter,
-            #     validation_rel
-            # ])
-            
+        for _ in range(self.total_batches):            
             self.single_valid_game(self.player1, self.player2)
             self.single_valid_game(self.player2, self.player1)
 
@@ -62,34 +36,26 @@ class Validation:
         # start a game
         game = chess.Board()
         pgn = chess.pgn.Game()
+        print("started the game")
         pgn.headers["White"] = player_white.__class__.__name__
         pgn.headers["Black"] = player_black.__class__.__name__
         pgn.setup(game)
         node = None
-        whites_turn = True
         is_first_move = True
         while not game.is_game_over():
-            print("yes")
-            is_legal = False
-            legal_moves = game.legal_moves
             move = None
             # move if white
-            if whites_turn:
-                while not is_legal:
-                    move = player_white.think(game.fen())
-                    if move in legal_moves:
-                        game.push(move)
-                        whites_turn = False
-                        is_legal = True
+            if game.turn:
+                move = player_white.think(game.fen())
+                assert move in game.legal_moves
+                game.push(move)
 
             # move if black
             else:
-                while not is_legal:
-                    move = player_black.think(game.fen())
-                    if move in legal_moves:
-                        game.push(move)
-                        whites_turn = True
-                        is_legal = True
+                move = player_black.think(game.fen())
+                assert move in game.legal_moves
+                game.push(move)
+
             if is_first_move:
                 node = pgn.add_variation(move)
                 is_first_move = False
@@ -100,42 +66,96 @@ class Validation:
         print(f"-----------------------------------------------------------\nGAME FINISHED\n{pgn}\n")
         with open(f"{self.path}/{datetime.now().strftime('%d%m%Y_%H%M%S')}.pgn", mode="w") as f:
             f.write(str(pgn))
-        # game_node = Node(
-        #     "Game",
-        #     timestamp=datetime.today(),
-        #     number_of_moves=math.ceil(len(list(pgn.mainline_moves())) / 2),
-        #     is_checkmate=game.is_checkmate(),
-        #     is_stalemate=game.is_stalemate(),
-        #     is_insufficient=game.is_insufficient_material(),
-        #     winner=game.result(),
-        #     winner_c=wc,
-        #     game_pgn=str(pgn),
-        # )
-        # played_relationship = Relationship(iter_node, "Played", game_node)
-        # self.create_db_elements([
-        #     game_node,
-        #     played_relationship
-        # ])
 
-    # def create_db_elements(self, ar):
-    #     try:
-    #         tx = self.db.begin()
-    #         for el in ar:
-    #             tx.create(el)
-    #         self.db.commit(tx)
-    #     except Exception as ex:
-    #         module_logger().exception(ex)
 
+from api.engines.ai_engine.computer import AiComputer
+from api.engines.ai_engine.models.final.net import Net as Net1
+
+from api.engines.ai_engine_new.computer import AiComputer2
+from api.engines.ai_engine_new.models.final.net import Net as Net2
+
+from api.engines.minimax_engine.computer import MiniMaxComputer
+
+def ai_vs_ai():
+    p1 = AiComputer(load_model=True, model_name="final.pt", net=Net1)
+    p2 = AiComputer2(load_model=True, model_name="final.pt", net=Net2)
+    v = Validation(
+        player1=p1,
+        player2=p2,
+        batches=100,
+        path="./validation_games/ai1_vs_ai2"
+    )
+    v()
+
+def ai1_vs_stockfish():
+    p1 = AiComputer(load_model=True, model_name="final.pt", net=Net1)
+    v = Validation(
+        player1=p1,
+        batches=100,
+        path="./validation_games/ai1_vs_stockfish"
+    )
+    v()
+
+def ai1_vs_minmax():
+    p1 = AiComputer(load_model=True, model_name="final.pt", net=Net1)
+    p2 = MiniMaxComputer()
+    v = Validation(
+        player1=p1,
+        player2=p2,
+        batches=100,
+        path="./validation_games/ai1_vs_minmax"
+    )
+    v()
+
+def ai2_vs_stockfish():
+    p1 = AiComputer2(load_model=True, model_name="final.pt", net=Net2)
+    v = Validation(
+        player1=p1,
+        batches=100,
+        path="./validation_games/ai2_vs_stockfish"
+    )
+    v()
+
+def ai2_vs_minmax():
+    p1 = AiComputer2(load_model=True, model_name="final.pt", net=Net2)
+    p2 = MiniMaxComputer()
+    v = Validation(
+        player1=p1,
+        player2=p2,
+        batches=100,
+        path="./validation_games/ai2_vs_minmax"
+    )
+    v()
 
 if __name__ == "__main__":
-    p = sys.argv[1]
-    
+    # p = sys.argv[1]
 
-    if os.path.exists(p) and os.path.isdir(p):
-        from api.engines.montecarlo_engine.computer import MonteCarloComputer
-        from api.engines.minimax_engine.computer import MiniMaxComputer
-        m = MonteCarloComputer(2000)
-        b = MiniMaxComputer()
+    # if os.path.exists(p) and os.path.isdir(p):
+    #     from api.engines.montecarlo_engine.computer import MonteCarloComputer
+    #     from api.engines.minimax_engine.computer import MiniMaxComputer
+    #     m = MonteCarloComputer(10)
+    #     b = MiniMaxComputer(depth=5)
         
-        v = Validation(b, player2=m, batches=100, path=p)
-        v()
+    #     v = Validation(b, player2=m, batches=100, path=p)
+    #     v()
+    import multiprocessing as mp
+
+    processes = [
+        # ai1_vs_stockfish,
+        # ai1_vs_minmax, 
+        ai_vs_ai, 
+        ai_vs_ai, 
+        ai_vs_ai, 
+        ai_vs_ai, 
+        # ai2_vs_stockfish,
+        # ai2_vs_minmax
+    ]
+
+    pipi = list()
+    for p in processes:
+        proc = mp.Process(target=p)
+        proc.start()
+        pipi.append(proc)
+
+    for p in pipi:
+        p.join()

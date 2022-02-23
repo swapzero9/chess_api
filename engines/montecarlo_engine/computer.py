@@ -3,6 +3,9 @@ from api.engines.template_computer import Computer
 from dataclasses import dataclass
 import chess, random
 import numpy as np
+from time import perf_counter
+from api.utils.decorators import timer
+from pprint import pprint
 
 class MonteCarloComputer(Computer):
 
@@ -14,71 +17,65 @@ class MonteCarloComputer(Computer):
 
     def think(self, fen:str) -> chess.Move:
         b = chess.Board(fen)
-        move = self.mcts(fen, self.iterations)
-        r = chess.Move.from_uci(move)
-        if r in b.legal_moves:
-            return r
-        else:
-            return list(b.legal_moves)[0]
-
+        try:
+            move = self.mcts(fen, self.iterations)
+            r = chess.Move.from_uci(move)
+            if r in b.legal_moves:
+                return r
+            else:
+                return random.choice(list(b.legal_moves))
+        except Exception:
+            print('crit')
+            return random.choice(list(b.legal_moves))
     class MonteCarloSearch:
         @dataclass
         class Node:
-            p: chess.Board = chess.Board() # position of 
+            p: str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" # position of 
+            t: bool = True
             v: float = 0 # winning score of current node
             n: int = 0 # number of times parent node has been visited
-            c: int = 0 # number of times child node has been visited
             parent = None
             children = None
             def eval (self):
-                return self.v + 2 * np.sqrt(np.log(self.n + 1 + np.finfo(np.float32).eps) / (self.c + np.finfo(np.float32).eps))
-
+                return (self.v / (self.n + 1)) + np.sqrt(2) * np.sqrt(np.log(self.parent.n + 1) / (self.n + 1))
+            #eval = lambda x,y,z: x /10 +  np.sqrt(np.log(y+1) / (z+1))
         def __init__(self) -> None:
             pass
 
-        def __call__(self, start, iterations = 2000):
-            
-            curr_node = start if isinstance(start, self.Node) else self.Node(chess.Board(start))
+        def __call__(self, start_fen, iterations = 2000):
+            curr_node = self.Node(start_fen)
             curr_node.children = list()
-            for move in curr_node.p.legal_moves:
-                child = self.Node(chess.Board(curr_node.p.fen()))
-                child.p.push(move)
+            start_board = chess.Board(start_fen)
+            curr_node.t = start_board.turn
+            for move in start_board.legal_moves:
+                start_board.push(move)
+                child = self.Node(p=start_board.fen())
+                child.t = start_board.turn
                 child.parent = curr_node
                 curr_node.children.append(child)
+                start_board.pop()
 
             selected = None
             while iterations > 0:
-                if curr_node.p.turn: # white player, looking for max
-                    curr_node.children.sort(key=lambda x: x.eval(), reverse=True) 
-                    selected = curr_node.children[0]
+                # print(f"Iteration : {iterations} \r",end="" )
+                curr_node.children.sort(key=lambda x: x.eval(), reverse=start_board.turn) 
+                selected = curr_node.children[0]
 
-                    ex_child = self.expand(selected)
-                    self.rollout(ex_child)
-                    curr_node = self.backpropagation(self.leaf_node, self.reward)
-
-                else: #black player looking for min
-                    curr_node.children.sort(key=lambda x: x.eval(), reverse=False) 
-                    selected = curr_node.children[0]
-
-                    ex_child = self.expand(selected)
-                    self.rollout(ex_child)
-                    curr_node = self.backpropagation(self.leaf_node, self.reward)
+                ex_child = self.expand(selected)
+                rol_node = chess.Board(selected.p)
+                leaf = self.rollout(rol_node, ex_child)
+                reward = self.get_normalised_outcome(leaf)
+                curr_node = self.backpropagation(leaf, reward)
                 iterations -= 1
 
-            best = None
-            if curr_node.p.turn:
-                curr_node.children.sort(key=lambda x: x.eval(), reverse=True) 
-                best = curr_node.children[0].p.fen()
-                
-            else:
-                curr_node.children.sort(key=lambda x: x.eval(), reverse=False) 
-                best = curr_node.children[0].p.fen()
+            curr_node.children.sort(key=lambda x: x.eval(), reverse=start_board.turn) 
+            best = curr_node.children[0].p
 
-            for move in curr_node.p.legal_moves:
-                curr_node.p.push(move)
-                if curr_node.p.fen() == best:
+            for move in start_board.legal_moves:
+                start_board.push(move)
+                if start_board.fen() == best:
                     return move.uci()
-                curr_node.p.pop()
+                start_board.pop()
 
         def expand(self, curr_node):
             if curr_node.children is None:
@@ -87,54 +84,56 @@ class MonteCarloComputer(Computer):
             if len(curr_node.children) == 0:
                 return curr_node
             else:
-                if curr_node.p.turn:
-                    curr_node.children.sort(key=lambda x: x.eval()) 
-                    selected = curr_node.children[0]
-                else: #black player looking for min
-                    curr_node.children.sort(key=lambda x: x.eval(), reverse=True) 
-                    selected = curr_node.children[0]
+                curr_node.children.sort(key=lambda x: x.eval(), reverse=curr_node.t) 
+                selected = curr_node.children[0]
+                return self.expand(selected)
 
-                self.expand(selected)
-
-        def rollout(self, curr_node):
-            if curr_node is None:
-                return
-            if curr_node.p.is_game_over():
-                o = curr_node.p.outcome().winner
-                self.leaf_node = curr_node
-                if o:
-                    self.reward = 1
-                elif not o:
-                    self.reward = -1
-                else: 
-                    self.reward = 0
-                return
+        def rollout(self, rol_node, curr_node):
+            if rol_node.is_game_over():
+                return curr_node
             else:
                 if curr_node.children is None:
                     curr_node.children = list()
 
-                for move in curr_node.p.legal_moves:
-                    child = self.Node(chess.Board(curr_node.p.fen()))
-                    child.p.push(move)
+                moves = list(rol_node.legal_moves)
+                final_move = random.choice(moves)
+                for move in moves:
+                    rol_node.push(move)
+                    child = self.Node(p=rol_node.fen())
+                    child.t = rol_node.turn
                     child.parent = curr_node
                     curr_node.children.append(child)
+                    rol_node.pop()
 
-                r = random.choice(curr_node.children)
-                self.rollout(r)
+                rol_node.push(final_move)
+                curr_node = curr_node.children[moves.index(final_move)]
+                return self.rollout(rol_node, curr_node)
 
         def backpropagation(self, curr_node, reward):
-            curr_node.c += 1
+            curr_node.n += 1
             curr_node.v += reward
             while curr_node.parent is not None:
                 curr_node.n += 1
+                curr_node.v += reward
                 curr_node = curr_node.parent
             return curr_node
 
+        def get_normalised_outcome(self, node):
+            b = chess.Board(node.p)
+            if not b.is_game_over():
+                return 0
+            o = b.outcome().winner
+            if o is None:
+                return 0
+            elif o:
+                return 1
+            else: 
+                return -1
+
 if __name__ == "__main__":
-    m = MonteCarloComputer(2000)
+    m = MonteCarloComputer(50)
     board = chess.Board()
     board.push(chess.Move.from_uci("e2e4"))
-    from time import perf_counter
 
     t = perf_counter()
     print(m.think(board.fen()))

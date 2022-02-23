@@ -6,9 +6,13 @@ import api.utils.decorators as d
 from fastapi import APIRouter
 from api.engines.random_engine.computer import RandomComputer
 from api.engines.minimax_engine.computer import MiniMaxComputer
+from api.engines.montecarlo_engine.computer import MonteCarloComputer
 from api.engines.ai_engine.computer import AiComputer
-from api.engines.ai_engine.models.architecture3.net import Net
+from api.engines.ai_engine.models.final.net import Net
 from api.engines.stockfish_engine.computer import StockfishComputer
+from api.engines.ai_engine_new.computer import AiComputer2
+from api.engines.ai_engine_new.models.final.net import Net as Net2
+
 import chess, os, chess.pgn, datetime, math
 from py2neo import Graph, Node
 from api.classes.chess_classes import EngineSparingInput, EngineSparingGame, ErrorDatabase
@@ -31,20 +35,27 @@ async def sparing(details: EngineSparingInput):
 
 
 def select_player(name): 
-
     try:
         if name == "minimax":
             return MiniMaxComputer()
         elif name == "random":
             return RandomComputer()
+        elif name == "montecarlo":
+            return MonteCarloComputer(100)
         elif name == "stockfish":
             return StockfishComputer("b", 200)
         elif name == "ai":
             try:
-                return AiComputer(load_model=True, net=Net)
+                return AiComputer(load_model=True, net=Net, model_name="final.pt")
             except Exception as ex:
                 module_logger().exception(ex)
                 return AiComputer(net=Net)
+        elif name == "ai2":
+            try:
+                return AiComputer2(load_model=True, net=Net2, model_name="final.pt")
+            except Exception as ex:
+                module_logger().exception(ex)
+                return AiComputer2(net=Net2)
         else:
             return None
     except Exception as ex:
