@@ -58,3 +58,9 @@ class ChessGamesStatistics(BaseModel):
     duel_statistics: Dict
     training_statistics: Dict
     validation_statistics: Dict
+
+class DBSummary(BaseModel):
+    timestamp: Optional[int] = round(time.time() * 1000)
+    validation_games: int
+    training_games: int
+    duel_games: int

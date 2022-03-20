@@ -1,4 +1,4 @@
-import logging 
+import logging, os
 
 class CustomFormatter(logging.Formatter):
 
@@ -23,6 +23,8 @@ class MyLogger:
         self.logger.setLevel(level)
         formatter = CustomFormatter("[%(asctime)s]; %(levelname)s; Function: %(funcName)s; Line: %(lineno)d => %(message)s")
 
+        if "logs" not in os.listdir("./api"):
+            os.mkdir("./api/logs")
         file_handler = logging.FileHandler(f"./api/logs/{name}.log")
         file_handler.setLevel(level)
         file_handler.setFormatter(formatter)

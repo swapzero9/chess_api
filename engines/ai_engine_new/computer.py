@@ -84,18 +84,17 @@ class TransformToTensor(object):
         if arg:
             ret.unsqueeze_(0)
         return ret
-class AiComputer2:
 
+class AiComputer2:
     CUDA_DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     MOVES:List[chess.Move] = generate_moves_list()
     tsfm = TransformToTensor()
 
     def __init__(self, *, load_model=False, model_name="model.pt", hist_folder="", net=None):
-        self.model = net()
+        self.model:nn.Module = net()
         self.model.to(self.CUDA_DEVICE)
-        self.model.share_memory()
         # self.model_summary()
-
+        
         self.model_path = "./api/engines/ai_engine_new/models"
         # self.model_path = "./models"
         self.model_name = model_name
@@ -138,6 +137,7 @@ class AiComputer2:
     def learn(self):
         proc_num = 5
         games_in_batch = 20
+        self.model.share_memory()
 
         # start game processes
         queue = mp.JoinableQueue(maxsize=games_in_batch)

@@ -103,17 +103,20 @@ class MiniMaxComputer(Computer):
 
         # pawn advancement
         if board.turn:
-            score += sum([int(i/8) + 1 for i in board.pieces(1, True)]) / 3
+            score += sum([int(i/8) + 1 for i in board.pieces(1, True)]) / 6
         else:
-            score += sum([(8 - int(i/8)) for i in board.pieces(1, False)]) / 3
+            score += sum([(8 - int(i/8)) for i in board.pieces(1, False)]) / 6
 
         # piece activity takes to long
-        score += sum([len(board.attackers(board.turn, sq)) for sq in range(64)]) / 4
+        score += sum([len(board.attackers(board.turn, sq)) for sq in range(64)]) / 10
 
         score *= 1 if board.turn else -1
         return score
 
     def minimax(self, node, depth, alpha, beta):
+        legal = list(node.legal_moves)
+        if depth <= 0 and not node.is_game_over():
+            legal = [m for m in legal if node.is_capture(m)]
         if node.is_game_over():
             # game ended give scores accordingly
             b = node.outcome()
@@ -123,18 +126,16 @@ class MiniMaxComputer(Computer):
                 return None, -100000
             else:
                 return None, 0
-        elif depth == 0:
+        elif depth <= 0 and len(legal) == 0:
             return None, self.evaluate_position(node)
         
         best_move:chess.Move = None
         if node.turn: # whites turn looking for max
             goal = -math.inf
-            legal = list(node.legal_moves)
             legal.sort(key=lambda x: node.is_capture(x), reverse=True)
             legal.sort(key=lambda x: self.test_check(node, x), reverse=True)
             legal.sort(key=lambda x: self.test_checkmate(node, x), reverse=True)
             for move in legal:
-
                 node.push(move)
                 z_hash = node.zobrist_hash()
                 if z_hash in self.transposition_table:
@@ -155,7 +156,6 @@ class MiniMaxComputer(Computer):
             return best_move, goal
         else:
             goal = math.inf
-            legal = list(node.legal_moves)
             legal.sort(key=lambda x: node.is_capture(x), reverse=True)
             legal.sort(key=lambda x: self.test_check(node, x), reverse=True)
             legal.sort(key=lambda x: self.test_checkmate(node, x), reverse=True)

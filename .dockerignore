@@ -4,3 +4,26 @@ __pycache__
 stockfish.exe
 lichess_db.pgn
 test.json
+hobby
+
+# ai engine games and models 
+games
+games2
+architecture1
+architecture2
+architecture3
+architecture4
+model1.pt
+model2.pt
+
+# ai engine 2 games and models
+games_history_a1
+games_history_a2
+games_history_a4
+games_history_last
+favourites.txt
+l5
+endme.pt
+model.pt
+model3.pt
+model4.pt
