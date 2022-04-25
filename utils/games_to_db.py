@@ -21,10 +21,11 @@ def create_games(db, parent_node, path):
         with open(f"{path}/{file}", "r") as f:
             pgn = chess.pgn.read_game(f)
 
-        pgn.headers["White"] = "AI Engine (Implementation no.2)"
-        pgn.headers["Black"] = "AI Engine (Implementation no.2)"
-
-        assert pgn is not None
+        if pgn is None:
+            continue
+        if len(sys.argv) == 4:
+            pgn.headers["White"] = str(sys.argv[3])
+            pgn.headers["Black"] = str(sys.argv[3])
         
         timestamp = file.split(".")[0]
         t = datetime.strptime(timestamp, "%d%m%Y_%H%M%S")
@@ -33,7 +34,10 @@ def create_games(db, parent_node, path):
             game_number=(index + 1),
             game_pgn=str(pgn),
             timestamp=t,
-            winner=(pgn.headers["Result"])
+            winner=(pgn.headers["Result"]),
+            winner_c=pgn.headers["White"] if pgn.headers["Result"] == "1-0" else (pgn.headers["Black"] if pgn.headers["Result"] == "0-1" else None),
+            p1=pgn.headers["White"],
+            p2=pgn.headers["Black"]
         )
         rel = Relationship(parent_node, "Played", node)
         game_nodes.append(node)
@@ -45,6 +49,7 @@ if __name__ == "__main__":
     
     # argv[1] => path
     # argv[2] => {t/v}_name
+    # argv[3]
 
     # establish db connection
     db = Graph("bolt://localhost:7687", auth=("neo4j", "s3cr3t"))

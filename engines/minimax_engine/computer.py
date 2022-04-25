@@ -113,10 +113,10 @@ class MiniMaxComputer(Computer):
         score *= 1 if board.turn else -1
         return score
 
-    def minimax(self, node, depth, alpha, beta):
+    def minimax(self, node:chess.Board, depth, alpha, beta):
         legal = list(node.legal_moves)
         if depth <= 0 and not node.is_game_over():
-            legal = [m for m in legal if node.is_capture(m)]
+            legal = [m for m in legal if self.is_check(node, m)]
         if node.is_game_over():
             # game ended give scores accordingly
             b = node.outcome()
@@ -196,6 +196,14 @@ class MiniMaxComputer(Computer):
             "K": 12
         }
         return temp[letter]
+
+    def is_check(self, node, move):
+        node.push(move)
+        if node.is_check():
+            node.pop()
+            return True
+        node.pop()
+        return False
 
     def init_zobrist(self):
         pass

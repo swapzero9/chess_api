@@ -37,11 +37,11 @@ async def sparing(details: EngineSparingInput):
 def select_player(name): 
     try:
         if name == "minimax":
-            return MiniMaxComputer()
+            return MiniMaxComputer(depth=3)
         elif name == "random":
             return RandomComputer()
         elif name == "montecarlo":
-            return MonteCarloComputer(100)
+            return MonteCarloComputer(20)
         elif name == "stockfish":
             return StockfishComputer("b", 200)
         elif name == "ai":
